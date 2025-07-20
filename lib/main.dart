@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lankacater/screens/onboard_screen.dart';
 
 void main(){
   runApp(const MyApp());
@@ -14,18 +15,10 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         fontFamily: "Inter"
       ),
-      home: Scaffold(
-        body: Center(
-          child: Text(
-            "LankaCater",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w300
-            ),
-          )
-        ),
+      home: OnboardingScreen(
+        
       )
-      ,
-    );
+      );
+      
   }
 }
