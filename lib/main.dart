@@ -1,24 +1,86 @@
 import 'package:flutter/material.dart';
-import 'package:lankacater/screens/onboard_screen.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-void main(){
+import 'package:lankacater/screens/login_page.dart';
+import 'package:lankacater/pages/choose_role_page.dart';
+import 'package:lankacater/pages/customer_home_page.dart';
+import 'package:lankacater/pages/caterer_home_page.dart';
+import 'package:lankacater/pages/caterer_form_page.dart';
+import 'package:lankacater/pages/reset_password_page.dart';
+import 'package:lankacater/screens/onboard_screen.dart';  
+
+// Ensure the OnboardingPage class exists in onboarding_page.dart
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const MyApp());
 }
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+  static final FirebaseAnalytics analytics = FirebaseAnalytics.instance;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "LankaCater",
+      title: 'LankaCater',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        fontFamily: "Inter"
-      ),
-      home: OnboardingScreen(
-        
-      )
-      );
-      
+      theme: ThemeData(fontFamily: 'Inter'),
+      home: const AuthWrapper(),
+      routes: {
+        '/login': (context) => const LoginPage(),
+        '/choose_role': (context) => const ChooseRolePage(),
+        '/customer_home': (context) => const CustomerHomePage(),
+        '/caterer_home': (context) => const CatererHomePage(),
+        '/caterer_form': (context) => const CatererFormPage(),
+        '/reset_password': (context) => const ResetPasswordPage(initialEmail: ''),
+        '/onboarding': (context) => const OnboardingScreen(), 
+      },
+      navigatorObservers: [
+        FirebaseAnalyticsObserver(analytics: analytics),
+      ],
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  Future<Widget> _getLandingPage() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return const OnboardingScreen(); 
+
+    final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+    final role = userDoc.data()?['role'];
+
+    if (role == 'Cater') {
+      final catererDoc = await FirebaseFirestore.instance.collection('caterers').doc(user.uid).get();
+      return catererDoc.exists ? const CatererHomePage() : const CatererFormPage();
+    } else if (role == 'Customer') {
+      return const CustomerHomePage();
+    } else {
+      return const ChooseRolePage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _getLandingPage(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          return snapshot.data!;
+        } else {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+      },
+    );
   }
 }

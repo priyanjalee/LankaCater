@@ -3,9 +3,10 @@ import 'package:lankacater/constants/colors.dart';
 import 'package:lankacater/data/onboarding_data.dart';
 import 'package:lankacater/screens/Onbarding/front_page.dart';
 import 'package:lankacater/screens/Onbarding/shared_onboarding_screen.dart';
-import 'package:lankacater/screens/user_data_screen.dart';
 import 'package:lankacater/widgets/custom_button.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
+import 'package:lankacater/screens/login_page.dart'; 
+
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -53,7 +54,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           //smooth page indicator
           Container(
-            alignment: const Alignment(0, 0.60),
+            alignment: const Alignment(0, 0.55),
             child: SmoothPageIndicator(
               controller: _controller,
               count: 3,
@@ -85,12 +86,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               )
               : GestureDetector(
-                onTap: () { //Navigate to the user data page
-                  Navigator.push(context, MaterialPageRoute(builder: (context) =>
-                   const UserDataScreen()
-                  ));
-                  
-                },
+                onTap: () {
+                  Navigator.pushReplacement(
+                     context,
+                     MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+   },
+
+
                 child: CustomButton(
                   buttonName: showDetailsPage ?"Get Started" : "Next",
                   buttonColor: kMaincolor,

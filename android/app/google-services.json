@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "133118827263",
+    "project_id": "lankacater",
+    "storage_bucket": "lankacater.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:133118827263:android:eb0ec56d42e46cace68aca",
+        "android_client_info": {
+          "package_name": "com.example.lankacater"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3xeWUeYT1i0ubV8TQepav0RwBjEuNm8c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
