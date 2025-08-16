@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as path_lib; 
 import 'package:lankacater/constants/colors.dart';
 
 class CatererFormPage extends StatefulWidget {
@@ -21,7 +22,6 @@ class _CatererFormPageState extends State<CatererFormPage> {
   final emailController = TextEditingController();
   final addressController = TextEditingController();
   final businessTypeController = TextEditingController();
-  final eventTypesController = TextEditingController();
   final locationController = TextEditingController();
   final serviceAreaController = TextEditingController();
 
@@ -33,6 +33,28 @@ class _CatererFormPageState extends State<CatererFormPage> {
   File? logoImage;
 
   final ImagePicker picker = ImagePicker();
+
+  final Map<String, List<String>> eventCategories = {
+    'Celebrations': [
+      "Weddings",
+      "Anniversary",
+      "Birthday Parties",
+      "Christmas",
+      "Puberty Engagement",
+    ],
+    'Corporate & Formal': [
+      "Corporate",
+      "Opening Ceremonies",
+      "Cocktail Parties",
+    ],
+    'Religious & Cultural': [
+      "Pirith Ceremonies Catering",
+      "Alms Giving Ceremonies",
+      "Church Event Catering",
+    ],
+  };
+
+  Set<String> selectedEventTypes = {};
 
   @override
   void initState() {
@@ -68,16 +90,25 @@ class _CatererFormPageState extends State<CatererFormPage> {
     }
   }
 
-  Future<String> uploadImage(File imageFile, String path) async {
+  /// 
+  Future<String> uploadImage(File imageFile, String folderPath) async {
+    final ext = path_lib.extension(imageFile.path); // Correctly get file extension (.jpg/.png)
     final ref = FirebaseStorage.instance
         .ref()
-        .child('caterers/$path/${DateTime.now().millisecondsSinceEpoch}');
+        .child('caterers/$folderPath/${DateTime.now().millisecondsSinceEpoch}$ext');
     await ref.putFile(imageFile);
     return await ref.getDownloadURL();
   }
 
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (selectedEventTypes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select at least one event type")),
+      );
+      return;
+    }
 
     setState(() => isLoading = true);
 
@@ -107,7 +138,7 @@ class _CatererFormPageState extends State<CatererFormPage> {
         'email': emailController.text.trim(),
         'address': addressController.text.trim(),
         'businessType': businessTypeController.text.trim(),
-        'cateredEventTypes': eventTypesController.text.trim(),
+        'cateredEventTypes': selectedEventTypes.toList(),
         'gallery': galleryUrls,
         'menu': menuUrl ?? '',
         'logo': logoUrl ?? '',
@@ -133,29 +164,40 @@ class _CatererFormPageState extends State<CatererFormPage> {
 
   Widget _buildSectionTitle(String title) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Icon(Icons.star, color: kMaincolor, size: 20),
-          const SizedBox(width: 6),
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        ],
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Text(
+        title,
+        style: const TextStyle(
+            fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+      ),
+    );
+  }
+
+  Widget _buildCard({required Widget child}) {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: child,
       ),
     );
   }
 
   Widget _buildImagePreview(List<File> files, void Function(int) onDelete) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: 12,
+      runSpacing: 12,
       children: files.asMap().entries.map((entry) {
         int index = entry.key;
         File file = entry.value;
         return Stack(
+          clipBehavior: Clip.none,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(file, width: 100, height: 100, fit: BoxFit.cover),
+              borderRadius: BorderRadius.circular(16),
+              child: Image.file(file, width: 110, height: 110, fit: BoxFit.cover),
             ),
             Positioned(
               top: -8,
@@ -168,9 +210,9 @@ class _CatererFormPageState extends State<CatererFormPage> {
                   );
                 },
                 child: const CircleAvatar(
-                  radius: 12,
-                  backgroundColor: Colors.red,
-                  child: Icon(Icons.close, size: 16, color: Colors.white),
+                  radius: 14,
+                  backgroundColor: Colors.redAccent,
+                  child: Icon(Icons.close, size: 18, color: Colors.white),
                 ),
               ),
             ),
@@ -183,10 +225,11 @@ class _CatererFormPageState extends State<CatererFormPage> {
   Widget _buildSingleImagePreview(File? file, VoidCallback onRemove) {
     if (file == null) return const SizedBox();
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.file(file, width: 100, height: 100, fit: BoxFit.cover),
+          borderRadius: BorderRadius.circular(16),
+          child: Image.file(file, width: 110, height: 110, fit: BoxFit.cover),
         ),
         Positioned(
           top: -8,
@@ -194,9 +237,9 @@ class _CatererFormPageState extends State<CatererFormPage> {
           child: InkWell(
             onTap: onRemove,
             child: const CircleAvatar(
-              radius: 12,
-              backgroundColor: Colors.red,
-              child: Icon(Icons.close, size: 16, color: Colors.white),
+              radius: 14,
+              backgroundColor: Colors.redAccent,
+              child: Icon(Icons.close, size: 18, color: Colors.white),
             ),
           ),
         ),
@@ -213,7 +256,7 @@ class _CatererFormPageState extends State<CatererFormPage> {
     String? hint,
   }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 16),
       child: TextFormField(
         controller: controller,
         keyboardType: keyboardType,
@@ -221,7 +264,17 @@ class _CatererFormPageState extends State<CatererFormPage> {
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          floatingLabelBehavior: FloatingLabelBehavior.auto,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Colors.grey),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: kMaincolor, width: 2),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
         validator: (val) {
           if (val == null || val.trim().isEmpty) {
@@ -236,9 +289,67 @@ class _CatererFormPageState extends State<CatererFormPage> {
     );
   }
 
+  Widget _buildEventTypesGroupedCheckboxes() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Event Types Catered",
+          style: TextStyle(
+              fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+        ),
+        const SizedBox(height: 8),
+        ...eventCategories.entries.map((entry) {
+          return Card(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            child: ExpansionTile(
+              title: Text(
+                entry.key,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600, color: Colors.black87),
+              ),
+              childrenPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              children: entry.value.map((event) {
+                final isSelected = selectedEventTypes.contains(event);
+                return CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(event),
+                  value: isSelected,
+                  activeColor: kMaincolor,
+                  onChanged: (bool? checked) {
+                    setState(() {
+                      if (checked == true) {
+                        selectedEventTypes.add(event);
+                      } else {
+                        selectedEventTypes.remove(event);
+                      }
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+          );
+        }),
+        if (selectedEventTypes.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              "Please select at least one event type",
+              style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
         backgroundColor: kMaincolor,
         centerTitle: true,
@@ -248,90 +359,166 @@ class _CatererFormPageState extends State<CatererFormPage> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pushReplacementNamed(context, '/choose_role'),
+          onPressed: () =>
+              Navigator.pushReplacementNamed(context, '/choose_role'),
         ),
+        elevation: 4,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Column(
-                  children: [
-                    Text(
-                      "Welcome $catererName 👋",
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    const Text(
-                      "Let your food take the spotlight — create your profile and get discovered!",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              _buildSectionTitle("Business Details"),
-              _buildField(businessNameController, "Business or Owner's Name", hint: "e.g. Priyanjalee Caterers"),
-              _buildField(phoneController, "Phone Number", keyboardType: TextInputType.phone, hint: "07X XXX XXXX"),
-              _buildField(emailController, "Business Email", isEmail: true, hint: "example@email.com"),
-              _buildField(addressController, "Business Address", maxLines: 2, hint: "No.123, Street, City"),
-              _buildField(businessTypeController, "Business Type", hint: "Individual / Team / Restaurant-based"),
-              _buildField(eventTypesController, "Event Types Catered", hint: "Weddings, Pirith, Birthday Parties"),
-              _buildField(locationController, "Location", hint: "City or Town"),
-              _buildField(serviceAreaController, "Service Area", hint: "Colombo, Gampaha, etc."),
-
-              _buildSectionTitle("Gallery"),
-              _buildImagePreview(galleryImages, (index) => galleryImages.removeAt(index)),
-              ElevatedButton.icon(
-                onPressed: pickGalleryImages,
-                icon: const Icon(Icons.photo_library, color: Colors.white),
-                label: const Text("Add Gallery Images", style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(backgroundColor: kMaincolor),
-              ),
-
-              _buildSectionTitle("Menu"),
-              _buildSingleImagePreview(menuImage, () => setState(() => menuImage = null)),
-              ElevatedButton.icon(
-                onPressed: () => pickImage((file) => setState(() => menuImage = file)),
-                icon: const Icon(Icons.restaurant_menu, color: Colors.white),
-                label: const Text("Pick Menu Image", style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(backgroundColor: kMaincolor),
-              ),
-
-              _buildSectionTitle("Logo"),
-              _buildSingleImagePreview(logoImage, () => setState(() => logoImage = null)),
-              ElevatedButton.icon(
-                onPressed: () => pickImage((file) => setState(() => logoImage = file)),
-                icon: const Icon(Icons.branding_watermark, color: Colors.white),
-                label: const Text("Pick Logo Image", style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(backgroundColor: kMaincolor),
-              ),
-
-              const SizedBox(height: 30),
-              Center(
-                child: ElevatedButton(
-                  onPressed: isLoading ? null : _submitForm,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kMaincolor,
-                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        "Welcome $catererName 👋",
+                        style: const TextStyle(
+                            fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        "Let your food take the spotlight — create your profile and get discovered!",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 15, color: Colors.grey.shade700),
+                      ),
+                    ],
                   ),
-                  child: isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                          'SAVE AND CONTINUE',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+                _buildSectionTitle("Business Details"),
+                _buildCard(
+                  child: Column(
+                    children: [
+                      _buildField(businessNameController,
+                          "Business or Owner's Name",
+                          hint: "e.g. Priyanjalee Caterers"),
+                      _buildField(phoneController, "Phone Number",
+                          keyboardType: TextInputType.phone,
+                          hint: "07X XXX XXXX"),
+                      _buildField(emailController, "Business Email",
+                          isEmail: true, hint: "example@email.com"),
+                      _buildField(addressController, "Business Address",
+                          maxLines: 2, hint: "No.123, Street, City"),
+                      _buildField(businessTypeController, "Business Type",
+                          hint: "Individual / Team / Restaurant-based"),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildCard(child: _buildEventTypesGroupedCheckboxes()),
+                const SizedBox(height: 16),
+                _buildSectionTitle("Location & Service"),
+                _buildCard(
+                  child: Column(
+                    children: [
+                      _buildField(locationController, "Location",
+                          hint: "City or Town"),
+                      _buildField(serviceAreaController, "Service Area",
+                          hint: "Colombo, Gampaha, etc."),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildSectionTitle("Gallery"),
+                _buildCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildImagePreview(
+                          galleryImages, (index) => galleryImages.removeAt(index)),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: pickGalleryImages,
+                        icon: const Icon(Icons.photo_library, color: Colors.white),
+                        label: const Text("Add Gallery Images",
+                            style: TextStyle(color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: kMaincolor),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildSectionTitle("Menu"),
+                _buildCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSingleImagePreview(
+                          menuImage, () => setState(() => menuImage = null)),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () =>
+                            pickImage((file) => setState(() => menuImage = file)),
+                        icon: const Icon(Icons.restaurant_menu, color: Colors.white),
+                        label: const Text("Pick Menu Image",
+                            style: TextStyle(color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: kMaincolor),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildSectionTitle("Logo"),
+                _buildCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSingleImagePreview(
+                          logoImage, () => setState(() => logoImage = null)),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () =>
+                            pickImage((file) => setState(() => logoImage = file)),
+                        icon: const Icon(Icons.branding_watermark,
+                            color: Colors.white),
+                        label: const Text("Pick Logo Image",
+                            style: TextStyle(color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: kMaincolor),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 30),
+                Center(
+                  child: ElevatedButton(
+                    onPressed: isLoading ? null : _submitForm,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kMaincolor,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 50, vertical: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 4,
+                    ),
+                    child: isLoading
+                        ? const SizedBox(
+                            height: 24,
+                            width: 24,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 3),
+                          )
+                        : const Text(
+                            'SAVE AND CONTINUE',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
@@ -345,7 +532,6 @@ class _CatererFormPageState extends State<CatererFormPage> {
     emailController.dispose();
     addressController.dispose();
     businessTypeController.dispose();
-    eventTypesController.dispose();
     locationController.dispose();
     serviceAreaController.dispose();
     super.dispose();
