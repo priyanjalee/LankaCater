@@ -90,9 +90,8 @@ class _CatererFormPageState extends State<CatererFormPage> {
     }
   }
 
-  /// 
   Future<String> uploadImage(File imageFile, String folderPath) async {
-    final ext = path_lib.extension(imageFile.path); // Correctly get file extension (.jpg/.png)
+    final ext = path_lib.extension(imageFile.path);
     final ref = FirebaseStorage.instance
         .ref()
         .child('caterers/$folderPath/${DateTime.now().millisecondsSinceEpoch}$ext');
@@ -132,6 +131,7 @@ class _CatererFormPageState extends State<CatererFormPage> {
         logoUrl = await uploadImage(logoImage!, "$uid/logo");
       }
 
+      // Save caterer profile
       await FirebaseFirestore.instance.collection('caterers').doc(uid).set({
         'businessName': businessNameController.text.trim(),
         'contact': phoneController.text.trim(),
@@ -147,10 +147,17 @@ class _CatererFormPageState extends State<CatererFormPage> {
         'createdAt': Timestamp.now(),
       });
 
+      // ✅ Save role in users collection
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'role': 'caterer',
+      }, SetOptions(merge: true));
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Profile saved successfully!")),
       );
+
+      // ✅ Navigate to Caterer Home
       Navigator.pushReplacementNamed(context, '/caterer_home');
     } catch (e) {
       if (!mounted) return;

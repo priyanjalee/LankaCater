@@ -8,6 +8,10 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:lankacater/constants/colors.dart';
 import 'package:lankacater/pages/reset_password_page.dart';
 import 'register_page.dart';
+import '../pages/choose_role_page.dart';
+import '../pages/caterer_home_page.dart';
+import '../pages/caterer_form_page.dart';
+import '../pages/customer_home_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -27,26 +31,43 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _navigateBasedOnRole(User user) async {
     try {
-      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      // Check if caterer profile exists first
+      final catererDoc = await FirebaseFirestore.instance
+          .collection('caterers')
+          .doc(user.uid)
+          .get();
 
-      if (userDoc.exists && userDoc.data()!.containsKey('role')) {
-        final role = userDoc['role'];
+      if (catererDoc.exists) {
+        // Returning caterer → Home
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const CatererHomePage()),
+        );
+        return;
+      }
 
-        if (role == 'Customer') {
-          Navigator.pushReplacementNamed(context, '/customer_home');
-        } else if (role == 'Cater') {
-          final catererDoc = await FirebaseFirestore.instance.collection('caterers').doc(user.uid).get();
+      // Check user's role
+      final userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final role = userDoc.data()?['role'];
 
-          if (catererDoc.exists && catererDoc.data()!.containsKey('businessName')) {
-            Navigator.pushReplacementNamed(context, '/caterer_home');
-          } else {
-            Navigator.pushReplacementNamed(context, '/caterer_form');
-          }
-        } else {
-          Navigator.pushReplacementNamed(context, '/choose_role');
-        }
+      if (role == 'Customer') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+        );
+      } else if (role == 'Cater') {
+        // First-time caterer → show form
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const CatererFormPage()),
+        );
       } else {
-        Navigator.pushReplacementNamed(context, '/choose_role');
+        // Role not selected → choose role
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ChooseRolePage()),
+        );
       }
     } catch (e) {
       if (kDebugMode) print('Navigation error: $e');
@@ -69,16 +90,17 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       await FirebaseAnalytics.instance.logLogin(loginMethod: 'email');
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      final user = FirebaseAuth.instance.currentUser;
+      final user = userCredential.user;
       if (user != null) {
         await _navigateBasedOnRole(user);
       }
     } catch (e) {
+      if (kDebugMode) print('Email login error: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Login failed. Please check credentials.")),
       );
@@ -96,9 +118,8 @@ class _LoginPageState extends State<LoginPage> {
         idToken: googleAuth.idToken,
       );
 
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      final user = FirebaseAuth.instance.currentUser;
+      final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+      final user = userCredential.user;
       if (user != null) {
         await _navigateBasedOnRole(user);
       }
@@ -197,7 +218,7 @@ class _LoginPageState extends State<LoginPage> {
                   padding: const EdgeInsets.symmetric(vertical: 15),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                icon: Image.asset('assests/images/ggl.png', height: 24), // Check path is correct
+                icon: Image.asset('assests/images/ggl.png', height: 24),
                 label: const Text("Sign Up with Google", style: TextStyle(color: Colors.white)),
               ),
               const SizedBox(height: 20),

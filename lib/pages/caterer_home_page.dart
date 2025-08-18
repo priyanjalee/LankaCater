@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../constants/colors.dart';
+import 'choose_role_page.dart'; 
 
 class CatererHomePage extends StatefulWidget {
   const CatererHomePage({super.key});
@@ -87,7 +88,13 @@ class _CatererHomePageState extends State<CatererHomePage> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () {
-            Navigator.pushReplacementNamed(context, '/choose-role');
+            // Navigate directly to ChooseRolePage
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ChooseRolePage(),
+              ),
+            );
           },
         ),
         title: Text(
@@ -97,15 +104,6 @@ class _CatererHomePageState extends State<CatererHomePage> {
             color: Colors.white,
           ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: () {
-              FirebaseAuth.instance.signOut();
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-          ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -114,8 +112,6 @@ class _CatererHomePageState extends State<CatererHomePage> {
           children: [
             _quickActionsCard(),
             const SizedBox(height: 16),
-
-            // Ratings Section only if there are ratings
             if (hasRatings) ...[
               _sectionTitle("Ratings & Reviews"),
               const SizedBox(height: 12),
@@ -246,7 +242,7 @@ class _CatererHomePageState extends State<CatererHomePage> {
       style: TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.bold,
-        color: kMaincolor, // Title in kMaincolor
+        color: kMaincolor,
       ),
     );
   }

@@ -47,7 +47,7 @@ class MyApp extends StatelessWidget {
             const ResetPasswordPage(initialEmail: ''),
         '/onboarding': (context) => const OnboardingScreen(),
 
-        // ✅ Home alias route - will redirect based on role
+        // Home alias route
         '/home': (context) => const HomeRedirectPage(),
 
         // Quick Actions & Bottom Nav Pages
@@ -64,73 +64,35 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Decides whether to go to Caterer or Customer home
-class HomeRedirectPage extends StatelessWidget {
-  const HomeRedirectPage({super.key});
-
-  Future<Widget> _getHomePage() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const OnboardingScreen();
-
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    final role = userDoc.data()?['role'];
-
-    if (role == 'Cater') {
-      final catererDoc = await FirebaseFirestore.instance
-          .collection('caterers')
-          .doc(user.uid)
-          .get();
-      return catererDoc.exists
-          ? const CatererHomePage()
-          : const CatererFormPage();
-    } else if (role == 'Customer') {
-      return const CustomerHomePage();
-    } else {
-      return const ChooseRolePage();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Widget>(
-      future: _getHomePage(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done) {
-          return snapshot.data!;
-        }
-        return const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
-        );
-      },
-    );
-  }
-}
-
+/// Wrapper to decide landing page after login
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
   Future<Widget> _getLandingPage() async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return const OnboardingScreen();
 
+    // ✅ Check caterer profile first
+    final catererDoc = await FirebaseFirestore.instance
+        .collection('caterers')
+        .doc(user.uid)
+        .get();
+
+    if (catererDoc.exists) {
+      return const CatererHomePage();
+    }
+
+    // Check user's role in 'users' collection
     final userDoc =
         await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
     final role = userDoc.data()?['role'];
 
-    if (role == 'Cater') {
-      final catererDoc = await FirebaseFirestore.instance
-          .collection('caterers')
-          .doc(user.uid)
-          .get();
-      return catererDoc.exists
-          ? const CatererHomePage()
-          : const CatererFormPage();
-    } else if (role == 'Customer') {
+    if (role == 'Customer') {
       return const CustomerHomePage();
+    } else if (role == 'Cater') {
+      return const CatererFormPage(); // First-time caterer
     } else {
-      return const ChooseRolePage();
+      return const ChooseRolePage(); // Role not selected
     }
   }
 
@@ -146,6 +108,54 @@ class AuthWrapper extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
+      },
+    );
+  }
+}
+
+/// Decides whether to go to Caterer or Customer home (used for /home route)
+class HomeRedirectPage extends StatelessWidget {
+  const HomeRedirectPage({super.key});
+
+  Future<Widget> _getHomePage() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const OnboardingScreen();
+
+    // ✅ Check caterer profile first
+    final catererDoc = await FirebaseFirestore.instance
+        .collection('caterers')
+        .doc(user.uid)
+        .get();
+
+    if (catererDoc.exists) {
+      return const CatererHomePage();
+    }
+
+    // Check user's role in 'users' collection
+    final userDoc =
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+    final role = userDoc.data()?['role'];
+
+    if (role == 'Customer') {
+      return const CustomerHomePage();
+    } else if (role == 'Cater') {
+      return const CatererFormPage(); // First-time caterer
+    } else {
+      return const ChooseRolePage(); 
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _getHomePage(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          return snapshot.data!;
+        }
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
       },
     );
   }
