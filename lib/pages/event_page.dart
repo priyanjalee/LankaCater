@@ -317,8 +317,8 @@ class _EventsPageState extends State<EventsPage> {
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: kMaincolor,
-        child: const Icon(Icons.add, color: Colors.white),
         onPressed: _showAddEventDialog,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,

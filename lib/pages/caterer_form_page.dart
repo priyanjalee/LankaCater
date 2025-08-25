@@ -6,6 +6,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path_lib; 
 import 'package:lankacater/constants/colors.dart';
+import 'package:geocoding/geocoding.dart';
 
 class CatererFormPage extends StatefulWidget {
   const CatererFormPage({super.key});
@@ -115,6 +116,7 @@ class _CatererFormPageState extends State<CatererFormPage> {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid == null) throw Exception("User not logged in.");
 
+      // ✅ Upload images
       List<String> galleryUrls = [];
       for (File file in galleryImages) {
         String url = await uploadImage(file, "$uid/gallery");
@@ -131,6 +133,21 @@ class _CatererFormPageState extends State<CatererFormPage> {
         logoUrl = await uploadImage(logoImage!, "$uid/logo");
       }
 
+      // ✅ Geocode location to get latitude & longitude
+      double? latitude;
+      double? longitude;
+
+      try {
+        List<Location> locations = await locationFromAddress(locationController.text.trim());
+        if (locations.isNotEmpty) {
+          latitude = locations.first.latitude;
+          longitude = locations.first.longitude;
+        }
+      } catch (e) {
+        latitude = null;
+        longitude = null;
+      }
+
       // Save caterer profile
       await FirebaseFirestore.instance.collection('caterers').doc(uid).set({
         'businessName': businessNameController.text.trim(),
@@ -144,10 +161,12 @@ class _CatererFormPageState extends State<CatererFormPage> {
         'logo': logoUrl ?? '',
         'location': locationController.text.trim(),
         'serviceArea': serviceAreaController.text.trim(),
+        'latitude': latitude ?? 0.0,
+        'longitude': longitude ?? 0.0,
         'createdAt': Timestamp.now(),
       });
 
-      // ✅ Save role in users collection
+      // Save role
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
         'role': 'caterer',
       }, SetOptions(merge: true));
@@ -157,7 +176,7 @@ class _CatererFormPageState extends State<CatererFormPage> {
         const SnackBar(content: Text("Profile saved successfully!")),
       );
 
-      // ✅ Navigate to Caterer Home
+      // Navigate to Caterer Home
       Navigator.pushReplacementNamed(context, '/caterer_home');
     } catch (e) {
       if (!mounted) return;

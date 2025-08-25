@@ -12,13 +12,13 @@ import 'package:lankacater/pages/caterer_home_page.dart';
 import 'package:lankacater/pages/caterer_form_page.dart';
 import 'package:lankacater/pages/reset_password_page.dart';
 import 'package:lankacater/screens/onboard_screen.dart';
+import 'package:lankacater/pages/customer_profile_page.dart';
 
 // Quick Actions Pages
 import 'package:lankacater/pages/orders_page.dart';
 import 'package:lankacater/pages/event_page.dart';
 import 'package:lankacater/pages/manage_menu_page.dart';
 import 'package:lankacater/pages/manage_gallery_page.dart';
-import 'package:lankacater/pages/caterer_profile_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,7 +55,9 @@ class MyApp extends StatelessWidget {
         '/events': (context) => const EventsPage(),
         '/manage-menu': (context) => const ManageMenuPage(),
         '/manage-gallery': (context) => const ManageGalleryPage(),
-        '/edit-profile': (context) => const ProfilePage(),
+
+        // Profile page fix
+        '/edit-profile': (context) => const CustomerProfilePage(),
       },
       navigatorObservers: [
         FirebaseAnalyticsObserver(analytics: analytics),
@@ -72,7 +74,7 @@ class AuthWrapper extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const OnboardingScreen();
 
-    // ✅ Check caterer profile first
+    // Check caterer profile first
     final catererDoc = await FirebaseFirestore.instance
         .collection('caterers')
         .doc(user.uid)
@@ -121,7 +123,7 @@ class HomeRedirectPage extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const OnboardingScreen();
 
-    // ✅ Check caterer profile first
+    // Check caterer profile first
     final catererDoc = await FirebaseFirestore.instance
         .collection('caterers')
         .doc(user.uid)
@@ -141,7 +143,7 @@ class HomeRedirectPage extends StatelessWidget {
     } else if (role == 'Cater') {
       return const CatererFormPage(); // First-time caterer
     } else {
-      return const ChooseRolePage(); 
+      return const ChooseRolePage();
     }
   }
 

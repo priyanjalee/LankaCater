@@ -1,274 +1,285 @@
-import 'dart:io';
+// caterer_details_page.dart
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../constants/colors.dart';
+import 'customer_order_page.dart';
 
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+class CatererDetailsPage extends StatelessWidget {
+  final String catererId;
+  const CatererDetailsPage({super.key, required this.catererId});
 
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  int _currentIndex = 3; // Profile page index
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  final _formKey = GlobalKey<FormState>();
-
-  // Controllers initialized at declaration
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _addressController = TextEditingController();
-
-  String profilePicUrl = '';
-  File? _profileImage;
-  final ImagePicker _picker = ImagePicker();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadUserData();
-  }
-
-  void _loadUserData() async {
-    final uid = _auth.currentUser!.uid;
-    final userDoc = await _firestore.collection('users').doc(uid).get();
-
-    if (userDoc.exists) {
-      final data = userDoc.data()!;
-      setState(() {
-        _nameController.text = data['name'] ?? '';
-        _emailController.text = data['email'] ?? _auth.currentUser!.email!;
-        _phoneController.text = data['phone'] ?? '';
-        _addressController.text = data['address'] ?? '';
-        profilePicUrl = data['profilePic'] ?? '';
-      });
-    } else {
-      _emailController.text = _auth.currentUser!.email!;
-    }
-  }
-
-  void _onBottomNavTap(int index) {
-    setState(() {
-      _currentIndex = index;
-    });
-
-    switch (index) {
-      case 0:
-        Navigator.pushReplacementNamed(context, '/home');
-        break;
-      case 1:
-        Navigator.pushReplacementNamed(context, '/orders');
-        break;
-      case 2:
-        Navigator.pushReplacementNamed(context, '/events');
-        break;
-      case 3:
-        break; // current page
-    }
-  }
-
-  Future<void> _pickProfileImage() async {
-    final pickedFile =
-        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-    if (pickedFile != null) {
-      setState(() {
-        _profileImage = File(pickedFile.path);
-      });
-      await _uploadProfileImage();
-    }
-  }
-
-  Future<void> _uploadProfileImage() async {
-    if (_profileImage == null) return;
-    final uid = _auth.currentUser!.uid;
-    final storageRef =
-        FirebaseStorage.instance.ref().child('profile_pics/$uid.jpg');
-    await storageRef.putFile(_profileImage!);
-    final url = await storageRef.getDownloadURL();
-    setState(() {
-      profilePicUrl = url;
-    });
-    await _firestore.collection('users').doc(uid).set({
-      'profilePic': url,
-    }, SetOptions(merge: true));
-  }
-
-  Future<void> _saveProfile() async {
-    final uid = _auth.currentUser!.uid;
-    await _firestore.collection('users').doc(uid).set({
-      'name': _nameController.text.trim(),
-      'email': _emailController.text.trim(),
-      'phone': _phoneController.text.trim(),
-      'address': _addressController.text.trim(),
-      'profilePic': profilePicUrl,
-    }, SetOptions(merge: true));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Profile updated successfully!')),
+  void _showFullScreenImage(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: InteractiveViewer(
+            child: Center(child: Image.network(imageUrl, fit: BoxFit.contain)),
+          ),
+        ),
+      ),
     );
-  }
-
-  void _logout() async {
-    await _auth.signOut();
-    Navigator.pushReplacementNamed(context, '/login'); // adjust route
   }
 
   @override
   Widget build(BuildContext context) {
+    final catererRef =
+        FirebaseFirestore.instance.collection("caterers").doc(catererId);
+
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
+        backgroundColor: kMaincolor,
+        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
-          "Profile",
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          "Caterer Details",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        backgroundColor: kMaincolor,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              // Profile Picture
-              Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 60,
-                      backgroundImage: _profileImage != null
-                          ? FileImage(_profileImage!)
-                          : (profilePicUrl.isNotEmpty
-                              ? NetworkImage(profilePicUrl)
-                              : const AssetImage(
-                                  'assets/profile_placeholder.png') as ImageProvider),
+      body: FutureBuilder<DocumentSnapshot>(
+        future: catererRef.get(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (!snapshot.hasData || !snapshot.data!.exists) {
+            return const Center(child: Text("Caterer not found."));
+          }
+
+          final data = snapshot.data!.data() as Map<String, dynamic>;
+          final galleryImages = List<String>.from(data['gallery'] ?? []);
+          final businessName = data['businessName'] ?? 'Unnamed Caterer';
+          final contact = data['contact'] ?? 'N/A';
+          final email = data['email'] ?? 'N/A';
+          final serviceArea = data['serviceArea'] ?? 'N/A';
+          final eventTypes =
+              (data['cateredEventTypes'] as List<dynamic>?)?.join(', ') ?? 'N/A';
+          final startingPrice = data['startingPrice'] ?? 'N/A';
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // --- Caterer Name & Badge ---
+                Text(
+                  businessName,
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Chip(
+                  label: Text("Starting from Rs. $startingPrice / person",
+                      style: const TextStyle(color: Colors.white)),
+                  backgroundColor: kMaincolor,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
+                const SizedBox(height: 16),
+
+                // --- Contact Info Card ---
+                Card(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  elevation: 3,
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _infoRow(Icons.phone, "Contact:", contact, isPhone: true),
+                        const SizedBox(height: 8),
+                        _infoRow(Icons.email, "Email:", email, isEmail: true),
+                        const SizedBox(height: 8),
+                        _infoRow(Icons.location_on, "Service Area:", serviceArea),
+                        const SizedBox(height: 8),
+                        _infoRow(Icons.event, "Event Types:", eventTypes),
+                      ],
                     ),
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: GestureDetector(
-                        onTap: _pickProfileImage,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: kMaincolor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.edit,
-                            color: Colors.white,
-                            size: 20,
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+                const Text(
+                  "Gallery",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                galleryImages.isNotEmpty
+                    ? SizedBox(
+                        height: 180,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: galleryImages.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemBuilder: (context, index) => GestureDetector(
+                            onTap: () => _showFullScreenImage(
+                                context, galleryImages[index]),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Image.network(
+                                galleryImages[index],
+                                width: 180,
+                                height: 180,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
+                      )
+                    : const Text("No gallery images available."),
 
-              // Editable Fields (email now editable)
-              _buildTextField("Name", _nameController),
-              _buildTextField("Email", _emailController), 
-              _buildTextField("Phone", _phoneController),
-              _buildTextField("Address", _addressController),
+                const SizedBox(height: 16),
+                const Text(
+                  "Menus / Packages",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                StreamBuilder<QuerySnapshot>(
+                  stream: catererRef.collection("menus").snapshots(),
+                  builder: (context, menuSnapshot) {
+                    if (menuSnapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (!menuSnapshot.hasData || menuSnapshot.data!.docs.isEmpty) {
+                      return const Text("No menus available.");
+                    }
 
-              const SizedBox(height: 30),
-
-              // Save Profile Button
-              ElevatedButton.icon(
-                onPressed: _saveProfile,
-                icon: const Icon(Icons.save, color: Colors.white),
-                label: const Text(
-                  "Save Profile",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    fontSize: 16, // uniform font size
-                  ),
+                    final menus = menuSnapshot.data!.docs;
+                    return Column(
+                      children: menus.map((menuDoc) {
+                        final menu = menuDoc.data() as Map<String, dynamic>;
+                        return Card(
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16)),
+                          elevation: 2,
+                          margin: const EdgeInsets.symmetric(vertical: 8),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.all(12),
+                            leading: menu['imageUrl'] != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Image.network(
+                                      menu['imageUrl'],
+                                      width: 60,
+                                      height: 60,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  )
+                                : Icon(Icons.restaurant_menu,
+                                    size: 50, color: kMaincolor),
+                            title: Text(menu['name'] ?? 'Menu',
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (menu['description'] != null &&
+                                    (menu['description'] as String).isNotEmpty)
+                                  Text(menu['description']),
+                                if (menu['price'] != null)
+                                  Text("Rs. ${menu['price']} / person",
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                            onTap: menu['imageUrl'] != null
+                                ? () => _showFullScreenImage(context, menu['imageUrl'])
+                                : null,
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  },
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kMaincolor,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 30, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Logout Button
-              ElevatedButton.icon(
-                onPressed: _logout,
-                icon: const Icon(Icons.logout, color: Colors.white),
-                label: const Text(
-                  "Logout",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16, // same as Save Profile
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kMaincolor,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 30, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+                const SizedBox(height: 80), // spacing for button
+              ],
+            ),
+          );
+        },
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: _onBottomNavTap,
-        selectedItemColor: kMaincolor,
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.shopping_bag), label: 'Orders'),
-          BottomNavigationBarItem(icon: Icon(Icons.event), label: 'Events'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
+      bottomSheet: FutureBuilder<DocumentSnapshot>(
+        future: catererRef.get(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox();
+          final businessName = (snapshot.data!.data() as Map<String, dynamic>)['businessName'] ?? 'Caterer';
+          return Container(
+            padding: const EdgeInsets.all(16),
+            width: double.infinity,
+            color: Colors.white,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kMaincolor,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => CustomerOrderPage(
+                      catererId: catererId,
+                      catererName: businessName,
+                    ),
+                  ),
+                );
+              },
+              child: const Text("Book Now",
+                  style: TextStyle(fontSize: 18, color: Colors.white)),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller,
-      {bool readOnly = false}) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: TextFormField(
-          controller: controller,
-          readOnly: readOnly,
-          decoration: InputDecoration(
-            labelText: label,
-            border: InputBorder.none,
+  Widget _infoRow(IconData icon, String label, String value,
+      {bool isPhone = false, bool isEmail = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: kMaincolor),
+        const SizedBox(width: 8),
+        Expanded(
+          child: GestureDetector(
+            onTap: () async {
+              if (isPhone && value != 'N/A') {
+                final uri = Uri.parse('tel:$value');
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              } else if (isEmail && value != 'N/A') {
+                final uri = Uri.parse('mailto:$value');
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              }
+            },
+            child: RichText(
+              text: TextSpan(
+                text: "$label ",
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600, color: Colors.black87),
+                children: [
+                  TextSpan(
+                    text: value,
+                    style: TextStyle(
+                        fontWeight: FontWeight.normal,
+                        color: (isPhone || isEmail) && value != 'N/A'
+                            ? Colors.blue
+                            : Colors.black54,
+                        decoration: (isPhone || isEmail) && value != 'N/A'
+                            ? TextDecoration.underline
+                            : null),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
