@@ -1,12 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../constants/colors.dart';
 import 'customer_order_page.dart';
+import 'chat_page.dart';
 
 class CatererDetailsPage extends StatelessWidget {
   final String catererId;
-  const CatererDetailsPage({super.key, required this.catererId});
+  final String customerId;
+  final Map<String, dynamic> initialData;
+
+  const CatererDetailsPage({
+    super.key,
+    required this.catererId,
+    required this.customerId,
+    required this.initialData,
+  });
 
   void _showFullScreenImage(BuildContext context, String imageUrl) {
     showDialog(
@@ -25,6 +35,7 @@ class CatererDetailsPage extends StatelessWidget {
   }
 
   void _callNumber(String number) async {
+    if (number.isEmpty) return;
     final Uri phoneUri = Uri(scheme: 'tel', path: number);
     if (await canLaunchUrl(phoneUri)) {
       await launchUrl(phoneUri);
@@ -38,15 +49,123 @@ class CatererDetailsPage extends StatelessWidget {
     final catererRef =
         FirebaseFirestore.instance.collection("caterers").doc(catererId);
 
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? "";
+
+    // Create unique chatId
+    final chatId = (currentUserId.hashCode <= catererId.hashCode)
+        ? "${currentUserId}_$catererId"
+        : "${catererId}_$currentUserId";
+
+    // Get data from initialData if available
+    final businessName = initialData['businessName']?.toString() ?? '';
+    final distance = initialData['distance'] as double?;
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: kMaincolor,
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          "Caterer Details",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Text(
+          businessName.isNotEmpty ? businessName : "Caterer Details",
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pop(context);
+          },
+        ),
+        actions: [
+          StreamBuilder<DocumentSnapshot>(
+            stream:
+                FirebaseFirestore.instance.collection('chats').doc(chatId).snapshots(),
+            builder: (context, snapshot) {
+              bool hasUnread = false;
+
+              if (snapshot.hasData && snapshot.data!.exists) {
+                final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+                final lastRead = data["lastRead_$currentUserId"];
+                final lastTimestamp = data["lastTimestamp"];
+
+                if (lastTimestamp != null &&
+                    (lastRead == null || (lastRead as Timestamp).compareTo(lastTimestamp) < 0)) {
+                  hasUnread = true;
+                }
+              }
+
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chat),
+                    onPressed: () async {
+                      try {
+                        final doc = await catererRef.get();
+                        final data = doc.data();
+
+                        if (data == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Caterer data not found.')),
+                          );
+                          return;
+                        }
+
+                        final otherUserName =
+                            data['businessName']?.toString() ?? (businessName.isNotEmpty ? businessName : 'Caterer');
+                        final otherUserImage = data['logoUrl']?.toString() ?? '';
+
+                        if (currentUserId.isEmpty || catererId.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Invalid user IDs.')),
+                          );
+                          return;
+                        }
+
+                        final chatRef =
+                            FirebaseFirestore.instance.collection('chats').doc(chatId);
+
+                        await chatRef.set({
+                          'participants': [currentUserId, catererId],
+                          'lastMessage': '',
+                          'lastTimestamp': FieldValue.serverTimestamp(),
+                        }, SetOptions(merge: true));
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatPage(
+                              chatId: chatId,
+                              otherUserName: otherUserName,
+                              otherUserId: catererId,
+                              otherUserImage: otherUserImage,
+                            ),
+                          ),
+                        );
+                      } catch (e) {
+                        debugPrint('Error opening chat: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Failed to open chat.')),
+                        );
+                      }
+                    },
+                  ),
+                  if (hasUnread)
+                    Positioned(
+                      right: 10,
+                      top: 10,
+                      child: Container(
+                        height: 10,
+                        width: 10,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          )
+        ],
       ),
       bottomNavigationBar: SizedBox(
         height: 70,
@@ -64,17 +183,26 @@ class CatererDetailsPage extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: () async {
-              final doc = await catererRef.get();
-              final data = doc.data() as Map<String, dynamic>;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CustomerOrderPage(
-                    catererId: catererId,
-                    catererName: data['businessName'] ?? '',
+              try {
+                final doc = await catererRef.get();
+                final data = doc.data();
+                if (data == null) return;
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CustomerOrderPage(
+                      catererId: catererId,
+                      catererName: data['businessName']?.toString() ?? businessName,
+                    ),
                   ),
-                ),
-              );
+                );
+              } catch (e) {
+                debugPrint('Error booking: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Failed to book order.')),
+                );
+              }
             },
           ),
         ),
@@ -90,27 +218,63 @@ class CatererDetailsPage extends StatelessWidget {
             return const Center(child: Text("Caterer not found."));
           }
 
-          final data = snapshot.data!.data() as Map<String, dynamic>;
+          final data = snapshot.data!.data() as Map<String, dynamic>?;
+
+          if (data == null) {
+            return const Center(child: Text("Caterer data is empty."));
+          }
 
           final galleryImages = List<String>.from(data['gallery'] ?? []);
-          final businessName = data['businessName'] ?? 'Unnamed Caterer';
-          final contact = data['contact'] ?? 'N/A';
-          final email = data['email'] ?? 'N/A';
-          final serviceArea = data['serviceArea'] ?? 'N/A';
+          final firestoreBusinessName =
+              data['businessName']?.toString() ?? 'Unnamed Caterer';
+          final displayBusinessName = businessName.isNotEmpty ? businessName : firestoreBusinessName;
+          final contact = data['contact']?.toString() ?? '';
+          final email = data['email']?.toString() ?? '';
+          final serviceArea = data['serviceArea']?.toString() ?? '';
           final eventTypes =
-              (data['cateredEventTypes'] as List<dynamic>?)?.join(', ') ?? 'N/A';
-          final startingPrice = data['startingPrice'] ?? 'N/A';
+              ((data['cateredEventTypes'] as List<dynamic>?)?.join(', ')) ?? '';
+          final startingPrice = data['startingPrice']?.toString() ?? 'N/A';
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Business Name & Price
-                Text(
-                  businessName,
-                  style: const TextStyle(
-                      fontSize: 28, fontWeight: FontWeight.bold),
+                // Business Name and Distance
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        displayBusinessName,
+                        style: const TextStyle(
+                            fontSize: 28, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    if (distance != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: kMaincolor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: kMaincolor),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.location_on, color: kMaincolor, size: 16),
+                            const SizedBox(width: 4),
+                            Text(
+                              "${distance.toStringAsFixed(1)} km away",
+                              style: TextStyle(
+                                color: kMaincolor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -122,17 +286,15 @@ class CatererDetailsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // Contact Info
-                _infoTile(Icons.phone, "Contact", contact, action: () {
-                  _callNumber(contact);
-                }),
+                _infoTile(Icons.phone, "Contact", contact,
+                    action:
+                        contact.isNotEmpty ? () => _callNumber(contact) : null),
                 _infoTile(Icons.email, "Email", email),
                 _infoTile(Icons.location_on, "Service Area", serviceArea),
                 _infoTile(Icons.event, "Event Types", eventTypes),
 
                 const SizedBox(height: 16),
 
-                // Gallery Carousel
                 const Text("Gallery",
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -144,17 +306,23 @@ class CatererDetailsPage extends StatelessWidget {
                           itemCount: galleryImages.length,
                           controller: PageController(viewportFraction: 0.8),
                           itemBuilder: (context, index) {
+                            final imageUrl = galleryImages[index];
                             return GestureDetector(
-                              onTap: () => _showFullScreenImage(
-                                  context, galleryImages[index]),
+                              onTap: () =>
+                                  _showFullScreenImage(context, imageUrl),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(horizontal: 8),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(12),
                                   child: Image.network(
-                                    galleryImages[index],
+                                    imageUrl,
                                     fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: Colors.grey[300],
+                                      child: const Icon(Icons.broken_image,
+                                          size: 40),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -166,7 +334,6 @@ class CatererDetailsPage extends StatelessWidget {
 
                 const SizedBox(height: 16),
 
-                // Menus / Packages - Grid
                 const Text("Menus / Packages",
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -179,7 +346,8 @@ class CatererDetailsPage extends StatelessWidget {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    if (!menuSnapshot.hasData || menuSnapshot.data!.docs.isEmpty) {
+                    if (!menuSnapshot.hasData ||
+                        menuSnapshot.data!.docs.isEmpty) {
                       return const Text("No menus available.");
                     }
 
@@ -197,82 +365,83 @@ class CatererDetailsPage extends StatelessWidget {
                       ),
                       itemCount: menus.length,
                       itemBuilder: (context, index) {
-                        final menu = menus[index].data() as Map<String, dynamic>;
+                        final menu =
+                            menus[index].data() as Map<String, dynamic>? ?? {};
+                        final menuName = menu['name']?.toString() ?? 'Menu';
+                        final menuDesc = menu['description']?.toString() ?? '';
+                        final menuPrice = menu['price']?.toString() ?? '';
+                        final menuImage = menu['imageUrl']?.toString() ?? '';
+
                         return GestureDetector(
-                          onTap: () => menu['imageUrl'] != null
-                              ? _showFullScreenImage(context, menu['imageUrl'])
+                          onTap: menuImage.isNotEmpty
+                              ? () => _showFullScreenImage(context, menuImage)
                               : null,
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              curve: Curves.easeInOut,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black26,
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 4),
-                                  )
-                                ],
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  menu['imageUrl'] != null
-                                      ? ClipRRect(
-                                          borderRadius: const BorderRadius.vertical(
-                                              top: Radius.circular(12)),
-                                          child: Image.network(
-                                            menu['imageUrl'],
-                                            height: 100,
-                                            width: double.infinity,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        )
-                                      : Container(
+                          child: Card(
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            elevation: 4,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                menuImage.isNotEmpty
+                                    ? ClipRRect(
+                                        borderRadius:
+                                            const BorderRadius.vertical(
+                                                top: Radius.circular(12)),
+                                        child: Image.network(
+                                          menuImage,
                                           height: 100,
-                                          decoration: BoxDecoration(
-                                              color: Colors.grey[300],
-                                              borderRadius:
-                                                  const BorderRadius.vertical(
-                                                      top: Radius.circular(12))),
-                                          child: const Icon(Icons.restaurant_menu,
-                                              size: 40, color: Colors.white),
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                            height: 100,
+                                            color: Colors.grey[300],
+                                            child: const Icon(
+                                                Icons.broken_image, size: 40),
+                                          ),
                                         ),
-                                  Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(menu['name'] ?? 'Menu',
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold)),
-                                        const SizedBox(height: 4),
-                                        if (menu['description'] != null &&
-                                            (menu['description'] as String)
-                                                .isNotEmpty)
-                                          Text(
-                                            menu['description'],
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(fontSize: 12),
-                                          ),
-                                        const SizedBox(height: 4),
-                                        if (menu['price'] != null)
-                                          Text(
-                                            "Rs. ${menu['price']} / person",
-                                            style: TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                                color: kMaincolor),
-                                          ),
-                                      ],
-                                    ),
+                                      )
+                                    : Container(
+                                        height: 100,
+                                        decoration: BoxDecoration(
+                                            color: Colors.grey[300],
+                                            borderRadius:
+                                                const BorderRadius.vertical(
+                                                    top: Radius.circular(12))),
+                                        child: const Icon(
+                                            Icons.restaurant_menu,
+                                            size: 40,
+                                            color: Colors.white),
+                                      ),
+                                Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(menuName,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                      if (menuDesc.isNotEmpty)
+                                        Text(
+                                          menuDesc,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style:
+                                              const TextStyle(fontSize: 12),
+                                        ),
+                                      if (menuPrice.isNotEmpty)
+                                        Text(
+                                          "Rs. $menuPrice / person",
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              color: kMaincolor),
+                                        ),
+                                    ],
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -297,8 +466,9 @@ class CatererDetailsPage extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 6),
       child: ListTile(
         leading: Icon(icon, color: kMaincolor),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(value),
+        title:
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text(value.isNotEmpty ? value : 'N/A'),
         trailing: action != null
             ? ElevatedButton(
                 onPressed: action,

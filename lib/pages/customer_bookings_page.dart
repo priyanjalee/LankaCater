@@ -8,6 +8,7 @@ import '../../constants/colors.dart';
 import 'customer_home_page.dart';
 import 'customer_notifications_page.dart';
 import 'customer_profile_page.dart';
+import 'caterer_home_page.dart';
 
 class CustomerBookingsPage extends StatefulWidget {
   const CustomerBookingsPage({super.key});
@@ -18,6 +19,10 @@ class CustomerBookingsPage extends StatefulWidget {
 
 class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   int _selectedIndex = 1; // Bookings tab active
+
+  // Store ratings & review controllers per booking
+  final Map<String, double> _ratings = {};
+  final Map<String, TextEditingController> _reviewControllers = {};
 
   void _onItemTapped(int index) {
     if (index == _selectedIndex) return;
@@ -53,9 +58,9 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
+    final user = FirebaseAuth.instance.currentUser;
 
-    if (userId == null) {
+    if (user == null) {
       return const Scaffold(
         body: Center(
           child: Text("You must be logged in to view bookings."),
@@ -70,15 +75,16 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         title: const Text(
           "My Bookings",
           style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.white),
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
         centerTitle: true,
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('bookings')
-            .where('customerId', isEqualTo: userId)
+            .where('customerId', isEqualTo: user.uid)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -118,7 +124,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: kMaincolor,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 12),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
@@ -143,103 +150,192 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             padding: const EdgeInsets.all(12),
             itemCount: bookings.length,
             itemBuilder: (context, index) {
-              final booking = bookings[index];
-              final catererName = booking.get('catererName') ?? 'Unknown Caterer';
-              final catererContact = booking.get('catererContact') ?? 'N/A';
-              final eventDate = booking.get('eventDate') ?? 'N/A';
-              final eventType = booking.get('eventType') ?? 'N/A';
-              final guestCount = booking.get('noOfPax')?.toString() ?? 'N/A';
-              final menu = booking.get('menu') ?? 'N/A';
-              final notes = booking.get('message') ?? '';
-              final status = booking.get('status') ?? 'Pending';
-              final paymentStatus = booking.get('paymentStatus') ?? 'Unpaid';
+              final data = bookings[index].data() as Map<String, dynamic>;
+              final bookingId = bookings[index].id;
+              final catererId = data['catererId'] ?? '';
+              final catererName = data['catererName'] ?? 'Unknown Caterer';
+              final catererContact = data['catererContact'] ?? 'N/A';
+              final eventDate = data['eventDate'] ?? 'N/A';
+              final eventType = data['eventType'] ?? 'N/A';
+              final guestCount = data['noOfPax']?.toString() ?? 'N/A';
+              final menu = data['menu'] ?? 'N/A';
+              final notes = data['message'] ?? '';
+              final status = data['status'] ?? 'Pending';
+              final paymentStatus = data['paymentStatus'] ?? 'Unpaid';
+
+              final rating = _ratings[bookingId] ?? 0.0;
+              final reviewController =
+                  _reviewControllers[bookingId] ??= TextEditingController();
 
               return Card(
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                elevation: 6,
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                elevation: 8,
+                margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      colors: [Colors.white, Colors.grey.shade50],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.2),
+                        spreadRadius: 2,
+                        blurRadius: 6,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Caterer Info
-                      Text(
-                        catererName,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                      // Caterer Name & Contact
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            catererName,
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            catererContact,
+                            style:
+                                const TextStyle(color: Colors.grey, fontSize: 13),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "Contact: $catererContact",
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                      const Divider(height: 20, thickness: 1),
+                      const SizedBox(height: 12),
 
                       // Event Details
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          _buildInfoColumn("Event Type", eventType),
-                          _buildInfoColumn("Date", eventDate),
-                          _buildInfoColumn("Guests", guestCount),
+                          _iconInfo(Icons.event, eventType),
+                          _iconInfo(Icons.date_range, eventDate),
+                          _iconInfo(Icons.people, guestCount),
                         ],
                       ),
                       const SizedBox(height: 12),
 
-                      // Menu & Notes
-                      _buildInfoRow("Menu", menu),
-                      if (notes.isNotEmpty) _buildInfoRow("Notes", notes),
+                      // Menu
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          "Menu: $menu",
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+
+                      // Notes
+                      if (notes.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            "Notes: $notes",
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+
                       const SizedBox(height: 12),
 
-                      // Status & Payment
+                      // Status & Payment badges
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-                            decoration: BoxDecoration(
-                              color: status == "Pending"
-                                  ? Colors.orange.shade100
-                                  : status == "Confirmed"
-                                      ? Colors.green.shade100
-                                      : Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                color: status == "Pending"
-                                    ? Colors.orange
-                                    : status == "Confirmed"
-                                        ? Colors.green
-                                        : Colors.grey,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-                            decoration: BoxDecoration(
-                              color: paymentStatus == "Paid"
-                                  ? Colors.green.shade100
-                                  : Colors.red.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              paymentStatus,
-                              style: TextStyle(
-                                color: paymentStatus == "Paid"
-                                    ? Colors.green
-                                    : Colors.red,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+                          _statusBadge(status),
+                          _paymentBadge(paymentStatus),
                         ],
                       ),
+
+                      const SizedBox(height: 12),
+
+                      // Rating & Review (only if completed)
+                      if (status == "Completed") ...[
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        const Text(
+                          "Rate this Caterer",
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: List.generate(5, (starIndex) {
+                            return IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _ratings[bookingId] = starIndex + 1.0;
+                                });
+                              },
+                              icon: Icon(
+                                rating >= starIndex + 1
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                color: Colors.amber,
+                              ),
+                            );
+                          }),
+                        ),
+                        TextField(
+                          controller: reviewController,
+                          decoration: const InputDecoration(
+                            hintText: "Write a review (optional)",
+                            border: OutlineInputBorder(),
+                          ),
+                          maxLines: 2,
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: kMaincolor,
+                          ),
+                          onPressed: () async {
+                            await FirebaseFirestore.instance
+                                .collection('reviews')
+                                .add({
+                              'bookingId': bookingId,
+                              'catererId': catererId,
+                              'customerId': user.uid,
+                              'rating': rating,
+                              'review': reviewController.text.trim(),
+                              'timestamp': Timestamp.now(),
+                            });
+
+                            reviewController.clear();
+                            setState(() {
+                              _ratings[bookingId] = 0.0;
+                            });
+
+                            // Navigate to Caterer Home Page
+                            if (context.mounted) {
+                              Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const CatererHomePage(),
+                                ),
+                              );
+                            }
+                          },
+                          child: const Text("Submit Rating"),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -266,41 +362,74 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     );
   }
 
-  Widget _buildInfoColumn(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  // Helper Widgets
+  Widget _iconInfo(IconData icon, String value) {
+    return Row(
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-              color: Colors.grey, fontWeight: FontWeight.w500, fontSize: 12),
-        ),
-        const SizedBox(height: 4),
+        Icon(icon, size: 18, color: kMaincolor),
+        const SizedBox(width: 4),
         Text(
           value,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ],
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Text(
-            "$label: ",
-            style: const TextStyle(
-                fontWeight: FontWeight.w600, color: Colors.grey),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
+  Widget _statusBadge(String status) {
+    Color bgColor;
+    Color textColor;
+    switch (status) {
+      case "Pending":
+        bgColor = Colors.orange.shade100;
+        textColor = Colors.orange.shade800;
+        break;
+      case "Confirmed":
+        bgColor = Colors.green.shade100;
+        textColor = Colors.green.shade800;
+        break;
+      case "Completed":
+        bgColor = Colors.blue.shade100;
+        textColor = Colors.blue.shade800;
+        break;
+      default:
+        bgColor = Colors.grey.shade200;
+        textColor = Colors.grey.shade600;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(
+            color: textColor, fontWeight: FontWeight.bold, fontSize: 13),
+      ),
+    );
+  }
+
+  Widget _paymentBadge(String paymentStatus) {
+    Color bgColor;
+    Color textColor;
+    if (paymentStatus == "Paid") {
+      bgColor = Colors.green.shade100;
+      textColor = Colors.green.shade800;
+    } else {
+      bgColor = Colors.red.shade100;
+      textColor = Colors.red.shade800;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        paymentStatus,
+        style: TextStyle(
+            color: textColor, fontWeight: FontWeight.bold, fontSize: 13),
       ),
     );
   }

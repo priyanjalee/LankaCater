@@ -1,6 +1,7 @@
 // customer_order_page.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../constants/colors.dart';
 
 class CustomerOrderPage extends StatefulWidget {
@@ -35,9 +36,13 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
   ];
 
   Future<void> _sendMessage() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
     if (_formKey.currentState!.validate() && _selectedMenu != null) {
       try {
         final customerData = {
+          'customerId': currentUser.uid, // IMPORTANT: Add customerId for Firestore rules
           'customerName': _nameController.text.trim(),
           'customerEmail': _emailController.text.trim(),
           'customerPhone': _phoneController.text.trim(),
@@ -58,7 +63,7 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
 
         // Save to bookings collection for customer's bookings page
         await FirebaseFirestore.instance.collection('bookings').add({
-          'customerId': 'YOUR_CUSTOMER_ID', // replace with FirebaseAuth.currentUser!.uid
+          'customerId': currentUser.uid,
           'catererId': widget.catererId,
           'catererName': widget.catererName,
           'catererContact': 'N/A', // optional, can fetch from caterer profile
@@ -134,7 +139,7 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
 
                 // Menu Dropdown
                 DropdownButtonFormField<String>(
-                  value: _selectedMenu,
+                  initialValue: _selectedMenu,
                   decoration: InputDecoration(
                     prefixIcon: const Icon(Icons.menu_book, color: kMaincolor),
                     labelText: "Select Menu",

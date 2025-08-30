@@ -49,6 +49,13 @@ dependencies:
   google_maps_flutter: ^2.12.3
   geocoding: ^2.0.5
   url_launcher: ^6.1.10
+  intl: ^0.18.1
+  firebase_messaging: ^16.0.0
+
+  flutter_map: ^8.2.1
+  latlong2: ^0.9.1
+  http: ^1.5.0
+  
 
 dev_dependencies:
   flutter_test:

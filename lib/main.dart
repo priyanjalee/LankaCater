@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 // Screens and Pages
 import 'package:lankacater/screens/login_page.dart';
@@ -13,6 +14,7 @@ import 'package:lankacater/pages/caterer_form_page.dart';
 import 'package:lankacater/pages/reset_password_page.dart';
 import 'package:lankacater/screens/onboard_screen.dart';
 import 'package:lankacater/pages/customer_profile_page.dart';
+import 'package:lankacater/pages/caterer_profile_page.dart';
 
 // Quick Actions Pages
 import 'package:lankacater/pages/orders_page.dart';
@@ -20,9 +22,21 @@ import 'package:lankacater/pages/event_page.dart';
 import 'package:lankacater/pages/manage_menu_page.dart';
 import 'package:lankacater/pages/manage_gallery_page.dart';
 
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint('Handling a background message: ${message.messageId}');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+
+  // Request permission for iOS
+  await FirebaseMessaging.instance.requestPermission();
+
+  // Background handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   runApp(const MyApp());
 }
 
@@ -46,8 +60,6 @@ class MyApp extends StatelessWidget {
         '/reset_password': (context) =>
             const ResetPasswordPage(initialEmail: ''),
         '/onboarding': (context) => const OnboardingScreen(),
-
-        // Home alias route
         '/home': (context) => const HomeRedirectPage(),
 
         // Quick Actions & Bottom Nav Pages
@@ -56,8 +68,9 @@ class MyApp extends StatelessWidget {
         '/manage-menu': (context) => const ManageMenuPage(),
         '/manage-gallery': (context) => const ManageGalleryPage(),
 
-        // Profile page fix
-        '/edit-profile': (context) => const CustomerProfilePage(),
+        // Profile Pages
+        '/customer-profile': (context) => const CustomerProfilePage(),
+        '/caterer-profile': (context) => const CatererProfilePage(),
       },
       navigatorObservers: [
         FirebaseAnalyticsObserver(analytics: analytics),
@@ -66,45 +79,45 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Shared helper function to determine landing/home page
+Future<Widget> getLandingOrHomePage() async {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return const OnboardingScreen();
+
+  // Save FCM token for the current user
+  final fcmToken = await FirebaseMessaging.instance.getToken();
+  if (fcmToken != null) {
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'fcmToken': fcmToken,
+    }, SetOptions(merge: true));
+  }
+
+  // Check if caterer profile exists
+  final catererDoc =
+      await FirebaseFirestore.instance.collection('caterers').doc(user.uid).get();
+  if (catererDoc.exists) return const CatererHomePage();
+
+  // Check user's role
+  final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+  final role = userDoc.data()?['role'];
+
+  if (role == 'Customer') return const CustomerHomePage();
+  if (role == 'Cater') return const CatererFormPage();
+
+  return const ChooseRolePage();
+}
+
 /// Wrapper to decide landing page after login
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
-  Future<Widget> _getLandingPage() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const OnboardingScreen();
-
-    // Check caterer profile first
-    final catererDoc = await FirebaseFirestore.instance
-        .collection('caterers')
-        .doc(user.uid)
-        .get();
-
-    if (catererDoc.exists) {
-      return const CatererHomePage();
-    }
-
-    // Check user's role in 'users' collection
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    final role = userDoc.data()?['role'];
-
-    if (role == 'Customer') {
-      return const CustomerHomePage();
-    } else if (role == 'Cater') {
-      return const CatererFormPage(); // First-time caterer
-    } else {
-      return const ChooseRolePage(); // Role not selected
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Widget>(
-      future: _getLandingPage(),
+      future: getLandingOrHomePage(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done) {
-          return snapshot.data!;
+          return snapshot.data ?? const OnboardingScreen();
         } else {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
@@ -119,41 +132,13 @@ class AuthWrapper extends StatelessWidget {
 class HomeRedirectPage extends StatelessWidget {
   const HomeRedirectPage({super.key});
 
-  Future<Widget> _getHomePage() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const OnboardingScreen();
-
-    // Check caterer profile first
-    final catererDoc = await FirebaseFirestore.instance
-        .collection('caterers')
-        .doc(user.uid)
-        .get();
-
-    if (catererDoc.exists) {
-      return const CatererHomePage();
-    }
-
-    // Check user's role in 'users' collection
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    final role = userDoc.data()?['role'];
-
-    if (role == 'Customer') {
-      return const CustomerHomePage();
-    } else if (role == 'Cater') {
-      return const CatererFormPage(); // First-time caterer
-    } else {
-      return const ChooseRolePage();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Widget>(
-      future: _getHomePage(),
+      future: getLandingOrHomePage(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done) {
-          return snapshot.data!;
+          return snapshot.data ?? const OnboardingScreen();
         }
         return const Scaffold(
           body: Center(child: CircularProgressIndicator()),

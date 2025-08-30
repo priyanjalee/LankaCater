@@ -1,25 +1,369 @@
-// caterer_details_page.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../constants/colors.dart';
-import 'customer_order_page.dart';
+import 'caterer_home_page.dart';
+import 'orders_page.dart';
+import 'event_page.dart';
+import 'caterer_location_pick_page.dart';
+import 'package:lankacater/screens/login_page.dart'; 
 
-class CatererDetailsPage extends StatelessWidget {
-  final String catererId;
-  const CatererDetailsPage({super.key, required this.catererId});
+class CatererProfilePage extends StatefulWidget {
+  const CatererProfilePage({super.key});
 
-  void _showFullScreenImage(BuildContext context, String imageUrl) {
-    showDialog(
+  @override
+  State<CatererProfilePage> createState() => _CatererProfilePageState();
+}
+
+class _CatererProfilePageState extends State<CatererProfilePage> {
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
+
+  int _currentIndex = 3;
+  bool _loading = true;
+  bool _saving = false;
+
+  String? profileImageUrl;
+  File? _pickedImage;
+
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() => _loading = true);
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        final doc = await _firestore.collection('caterers').doc(user.uid).get();
+        if (doc.exists) {
+          final data = doc.data()!;
+          _nameController.text = data['name'] ?? '';
+          _emailController.text = data['email'] ?? user.email ?? '';
+          _phoneController.text = data['phone'] ?? '';
+          _addressController.text = data['address'] ?? '';
+          profileImageUrl = data['profileImage'];
+        } else {
+          _emailController.text = user.email ?? '';
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading profile: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _pickProfileImage() async {
+    showModalBottomSheet(
       context: context,
-      builder: (_) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.zero,
-        child: GestureDetector(
-          onTap: () => Navigator.of(context).pop(),
-          child: InteractiveViewer(
-            child: Center(child: Image.network(imageUrl, fit: BoxFit.contain)),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Change Profile Picture',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildImagePickerOption(
+                  icon: Icons.camera_alt,
+                  label: 'Camera',
+                  source: ImageSource.camera,
+                ),
+                _buildImagePickerOption(
+                  icon: Icons.photo_library,
+                  label: 'Gallery',
+                  source: ImageSource.gallery,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImagePickerOption({
+    required IconData icon,
+    required String label,
+    required ImageSource source,
+  }) {
+    return GestureDetector(
+      onTap: () async {
+        Navigator.pop(context);
+        final picker = ImagePicker();
+        final pickedFile = await picker.pickImage(source: source, imageQuality: 70);
+        if (pickedFile != null) {
+          setState(() => _pickedImage = File(pickedFile.path));
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: kMaincolor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: kMaincolor.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 30, color: kMaincolor),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: kMaincolor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _uploadProfileImage(File image) async {
+    try {
+      final user = _auth.currentUser!;
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('caterer_profiles')
+          .child('${user.uid}.jpg');
+      await ref.putFile(image);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      debugPrint('Image upload failed: $e');
+      return null;
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    if (_nameController.text.trim().isEmpty) {
+      _showSnackBar("Name cannot be empty", isError: true);
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      String? uploadedUrl = profileImageUrl;
+      if (_pickedImage != null) {
+        final url = await _uploadProfileImage(_pickedImage!);
+        if (url != null) uploadedUrl = url;
+      }
+
+      final user = _auth.currentUser!;
+      await _firestore.collection('caterers').doc(user.uid).set({
+        'name': _nameController.text.trim(),
+        'email': _emailController.text.trim(),
+        'phone': _phoneController.text.trim(),
+        'address': _addressController.text.trim(),
+        'profileImage': uploadedUrl,
+      }, SetOptions(merge: true));
+
+      setState(() {
+        profileImageUrl = uploadedUrl;
+        _pickedImage = null;
+      });
+
+      _showSnackBar("Profile updated successfully!", isError: false);
+    } catch (e) {
+      debugPrint('Error saving profile: $e');
+      _showSnackBar("Failed to update profile", isError: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _showSnackBar(String message, {required bool isError}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+  void _onBottomNavTap(int index) {
+    if (index == _currentIndex) return;
+    setState(() => _currentIndex = index);
+
+    switch (index) {
+      case 0:
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const CatererHomePage()),
+        );
+        break;
+      case 1:
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+        );
+        break;
+      case 2:
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const EventsPage()),
+        );
+        break;
+      case 3:
+        break;
+    }
+  }
+
+  Widget _buildTextField({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+    TextInputType type = TextInputType.text,
+    bool enabled = true,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: type,
+        enabled: enabled,
+        style: TextStyle(
+          color: enabled ? Colors.black87 : Colors.grey[600],
+          fontSize: 16,
+        ),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(
+            color: enabled ? kMaincolor : Colors.grey[500],
+            fontWeight: FontWeight.w500,
+          ),
+          prefixIcon: Icon(
+            icon,
+            color: enabled ? kMaincolor : Colors.grey[500],
+            size: 22,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide(color: kMaincolor, width: 2),
+          ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide.none,
+          ),
+          filled: true,
+          fillColor: enabled ? Colors.white : Colors.grey[50],
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+    required Color color,
+    bool isLoading = false,
+    bool isOutlined = false,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: 56,
+      decoration: BoxDecoration(
+        gradient: !isOutlined ? LinearGradient(
+          colors: [color, color.withOpacity(0.8)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ) : null,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: !isOutlined ? [
+          BoxShadow(
+            color: color.withOpacity(0.3),
+            spreadRadius: 1,
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ] : null,
+        border: isOutlined ? Border.all(color: color, width: 2) : null,
+      ),
+      child: ElevatedButton.icon(
+        onPressed: isLoading ? null : onPressed,
+        icon: isLoading 
+          ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                color: isOutlined ? color : Colors.white,
+                strokeWidth: 2,
+              ),
+            )
+          : Icon(
+              icon,
+              color: isOutlined ? color : Colors.white,
+              size: 22,
+            ),
+        label: Text(
+          isLoading ? "Processing..." : label,
+          style: TextStyle(
+            color: isOutlined ? color : Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isOutlined ? Colors.transparent : Colors.transparent,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 16),
         ),
       ),
     );
@@ -27,259 +371,339 @@ class CatererDetailsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final catererRef =
-        FirebaseFirestore.instance.collection("caterers").doc(catererId);
-
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        backgroundColor: kMaincolor,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          "Caterer Details",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-      ),
-      body: FutureBuilder<DocumentSnapshot>(
-        future: catererRef.get(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || !snapshot.data!.exists) {
-            return const Center(child: Text("Caterer not found."));
-          }
-
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          final galleryImages = List<String>.from(data['gallery'] ?? []);
-          final businessName = data['businessName'] ?? 'Unnamed Caterer';
-          final contact = data['contact'] ?? 'N/A';
-          final email = data['email'] ?? 'N/A';
-          final serviceArea = data['serviceArea'] ?? 'N/A';
-          final eventTypes =
-              (data['cateredEventTypes'] as List<dynamic>?)?.join(', ') ?? 'N/A';
-          final startingPrice = data['startingPrice'] ?? 'N/A';
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+    if (_loading) {
+      return Scaffold(
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [kMaincolor.withOpacity(0.1), Colors.white],
+            ),
+          ),
+          child: const Center(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // --- Caterer Name & Badge ---
+                CircularProgressIndicator(),
+                SizedBox(height: 20),
                 Text(
-                  businessName,
-                  style: const TextStyle(
-                      fontSize: 28, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Chip(
-                  label: Text("Starting from Rs. $startingPrice / person",
-                      style: const TextStyle(color: Colors.white)),
-                  backgroundColor: kMaincolor,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                ),
-                const SizedBox(height: 16),
-
-                // --- Contact Info Card ---
-                Card(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
-                  elevation: 3,
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _infoRow(Icons.phone, "Contact:", contact, isPhone: true),
-                        const SizedBox(height: 8),
-                        _infoRow(Icons.email, "Email:", email, isEmail: true),
-                        const SizedBox(height: 8),
-                        _infoRow(Icons.location_on, "Service Area:", serviceArea),
-                        const SizedBox(height: 8),
-                        _infoRow(Icons.event, "Event Types:", eventTypes),
-                      ],
-                    ),
+                  'Loading Profile...',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
-                const SizedBox(height: 16),
-                const Text(
-                  "Gallery",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+    final user = _auth.currentUser;
+
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text(
+          "Profile",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
+        ),
+        backgroundColor: kMaincolor,
+        centerTitle: true,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [kMaincolor, kMaincolor.withOpacity(0.8)],
+            ),
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Profile Header
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [kMaincolor, kMaincolor.withOpacity(0.8)],
                 ),
-                const SizedBox(height: 8),
-                galleryImages.isNotEmpty
-                    ? SizedBox(
-                        height: 180,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: galleryImages.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
-                          itemBuilder: (context, index) => GestureDetector(
-                            onTap: () => _showFullScreenImage(
-                                context, galleryImages[index]),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Image.network(
-                                galleryImages[index],
-                                width: 180,
-                                height: 180,
-                                fit: BoxFit.cover,
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  // Profile Picture
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          spreadRadius: 5,
+                          blurRadius: 20,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 65,
+                          backgroundColor: Colors.white,
+                          child: CircleAvatar(
+                            radius: 60,
+                            backgroundColor: Colors.grey[300],
+                            backgroundImage: _pickedImage != null
+                                ? FileImage(_pickedImage!)
+                                : (profileImageUrl != null
+                                    ? NetworkImage(profileImageUrl!)
+                                    : null) as ImageProvider<Object>?,
+                            child: (_pickedImage == null && profileImageUrl == null)
+                                ? const Icon(
+                                    Icons.person,
+                                    size: 60,
+                                    color: Colors.white,
+                                  )
+                                : null,
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 5,
+                          right: 5,
+                          child: GestureDetector(
+                            onTap: _pickProfileImage,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    spreadRadius: 2,
+                                    blurRadius: 5,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.camera_alt,
+                                color: kMaincolor,
+                                size: 20,
                               ),
                             ),
                           ),
                         ),
-                      )
-                    : const Text("No gallery images available."),
-
-                const SizedBox(height: 16),
-                const Text(
-                  "Menus / Packages",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                StreamBuilder<QuerySnapshot>(
-                  stream: catererRef.collection("menus").snapshots(),
-                  builder: (context, menuSnapshot) {
-                    if (menuSnapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (!menuSnapshot.hasData || menuSnapshot.data!.docs.isEmpty) {
-                      return const Text("No menus available.");
-                    }
-
-                    final menus = menuSnapshot.data!.docs;
-                    return Column(
-                      children: menus.map((menuDoc) {
-                        final menu = menuDoc.data() as Map<String, dynamic>;
-                        return Card(
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16)),
-                          elevation: 2,
-                          margin: const EdgeInsets.symmetric(vertical: 8),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(12),
-                            leading: menu['imageUrl'] != null
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
-                                      menu['imageUrl'],
-                                      width: 60,
-                                      height: 60,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  )
-                                : Icon(Icons.restaurant_menu,
-                                    size: 50, color: kMaincolor),
-                            title: Text(menu['name'] ?? 'Menu',
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (menu['description'] != null &&
-                                    (menu['description'] as String).isNotEmpty)
-                                  Text(menu['description']),
-                                if (menu['price'] != null)
-                                  Text("Rs. ${menu['price']} / person",
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                            onTap: menu['imageUrl'] != null
-                                ? () => _showFullScreenImage(context, menu['imageUrl'])
-                                : null,
-                          ),
-                        );
-                      }).toList(),
-                    );
-                  },
-                ),
-                const SizedBox(height: 80), // spacing for button
-              ],
-            ),
-          );
-        },
-      ),
-      bottomSheet: FutureBuilder<DocumentSnapshot>(
-        future: catererRef.get(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox();
-          final businessName = (snapshot.data!.data() as Map<String, dynamic>)['businessName'] ?? 'Caterer';
-          return Container(
-            padding: const EdgeInsets.all(16),
-            width: double.infinity,
-            color: Colors.white,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kMaincolor,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => CustomerOrderPage(
-                      catererId: catererId,
-                      catererName: businessName,
+                      ],
                     ),
                   ),
-                );
-              },
-              child: const Text("Book Now",
-                  style: TextStyle(fontSize: 18, color: Colors.white)),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _infoRow(IconData icon, String label, String value,
-      {bool isPhone = false, bool isEmail = false}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 20, color: kMaincolor),
-        const SizedBox(width: 8),
-        Expanded(
-          child: GestureDetector(
-            onTap: () async {
-              if (isPhone && value != 'N/A') {
-                final uri = Uri.parse('tel:$value');
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
-              } else if (isEmail && value != 'N/A') {
-                final uri = Uri.parse('mailto:$value');
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
-              }
-            },
-            child: RichText(
-              text: TextSpan(
-                text: "$label ",
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, color: Colors.black87),
-                children: [
-                  TextSpan(
-                    text: value,
-                    style: TextStyle(
-                        fontWeight: FontWeight.normal,
-                        color: (isPhone || isEmail) && value != 'N/A'
-                            ? Colors.blue
-                            : Colors.black54,
-                        decoration: (isPhone || isEmail) && value != 'N/A'
-                            ? TextDecoration.underline
-                            : null),
+                  const SizedBox(height: 16),
+                  Text(
+                    _nameController.text.isNotEmpty ? _nameController.text : 'Caterer',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _emailController.text,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 30),
                 ],
               ),
             ),
-          ),
+
+            // Form Section
+            Container(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Profile Information',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  _buildTextField(
+                    label: "Full Name",
+                    controller: _nameController,
+                    icon: Icons.person_outline,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    label: "Email Address",
+                    controller: _emailController,
+                    icon: Icons.email_outlined,
+                    type: TextInputType.emailAddress,
+                    enabled: false,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    label: "Phone Number",
+                    controller: _phoneController,
+                    icon: Icons.phone_outlined,
+                    type: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    label: "Business Address",
+                    controller: _addressController,
+                    icon: Icons.location_on_outlined,
+                  ),
+                  const SizedBox(height: 30),
+
+                  // Action Buttons Section
+                  const Text(
+                    'Actions',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  _buildActionButton(
+                    label: "Save Profile",
+                    icon: Icons.save_outlined,
+                    onPressed: _saveProfile,
+                    color: kMaincolor,
+                    isLoading: _saving,
+                  ),
+                  const SizedBox(height: 16),
+
+                  _buildActionButton(
+                    label: "Update Location",
+                    icon: Icons.location_on_outlined,
+                    onPressed: user == null
+                        ? () {}
+                        : () async {
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => CatererLocationPickPage(userId: user.uid),
+                              ),
+                            );
+
+                            if (result != null) {
+                              await _firestore
+                                  .collection('caterers')
+                                  .doc(user.uid)
+                                  .set({
+                                'location': result,
+                              }, SetOptions(merge: true));
+
+                              _showSnackBar("Location updated successfully!", isError: false);
+                            }
+                          },
+                    color: Colors.blue,
+                    isOutlined: true,
+                  ),
+                  const SizedBox(height: 16),
+
+                  _buildActionButton(
+                    label: "Logout",
+                    icon: Icons.logout_outlined,
+                    onPressed: () async {
+                      showDialog(
+                        context: context,
+                        builder: (BuildContext context) {
+                          return AlertDialog(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                            title: const Text(
+                              'Confirm Logout',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            content: const Text('Are you sure you want to logout?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: Text(
+                                  'Cancel',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                              ),
+                              ElevatedButton(
+                                onPressed: () async {
+                                  Navigator.pop(context);
+                                  await _auth.signOut();
+                                  Navigator.pushAndRemoveUntil(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const LoginPage()),
+                                    (route) => false,
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Logout',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                    color: Colors.red,
+                    isOutlined: true,
+                  ),
+                  const SizedBox(height: 30),
+                ],
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: _onBottomNavTap,
+        selectedItemColor: kMaincolor,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        elevation: 10,
+        backgroundColor: Colors.white,
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.shopping_bag), label: 'Orders'),
+          BottomNavigationBarItem(icon: Icon(Icons.event), label: 'Events'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+        ],
+      ),
     );
   }
 }

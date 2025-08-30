@@ -8,6 +8,7 @@ import 'customer_profile_page.dart';
 import 'customer_notifications_page.dart';
 import 'caterer_details_page.dart';
 import 'location_search_page.dart';
+import 'package:latlong2/latlong.dart';
 
 class CustomerHomePage extends StatefulWidget {
   const CustomerHomePage({super.key});
@@ -20,8 +21,17 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   String _selectedEvent = "All";
   String _customerName = "Customer";
   int _selectedBottomIndex = 0;
-  int _currentPage = 0;
-  final PageController _pageController = PageController(viewportFraction: 0.55);
+  LatLng? _selectedLocation;
+
+  // Mapping main categories to sub-events
+  final Map<String, List<String>> _eventMap = {
+    "Weddings": ["Weddings"],
+    "Parties": ["Anniversary", "Birthday Parties", "Christmas", "Puberty Engagement"],
+    "Corporate": ["Corporate", "Opening Ceremonies", "Cocktail Parties"],
+    "Birthdays": ["Birthday Parties"],
+    "Religious": ["Pirith Ceremonies Catering", "Alms Giving Ceremonies", "Church Event Catering"],
+    "Cocktail": ["Cocktail Parties"],
+  };
 
   @override
   void initState() {
@@ -70,10 +80,20 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     }
   }
 
+  // Search bar now receives selected location from map
   Widget _buildSearchBar() {
     return GestureDetector(
-      onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const LocationSearchPage())),
+      onTap: () async {
+        final selected = await Navigator.push<LatLng>(
+          context,
+          MaterialPageRoute(builder: (_) => const LocationSearchPage()),
+        );
+        if (selected != null) {
+          setState(() {
+            _selectedLocation = selected;
+          });
+        }
+      },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -92,9 +112,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           children: [
             Icon(Icons.search, color: Colors.grey[500]),
             const SizedBox(width: 12),
-            Text(
-              "Search nearby caterers...",
-              style: TextStyle(color: Colors.grey[500], fontSize: 16),
+            Expanded(
+              child: Text(
+                _selectedLocation != null
+                    ? "Selected: ${_selectedLocation!.latitude.toStringAsFixed(5)}, ${_selectedLocation!.longitude.toStringAsFixed(5)}"
+                    : "Search nearby caterers...",
+                style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
@@ -198,9 +223,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
   Widget _buildCatererCarousel() {
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance.collection('caterers');
+
     if (_selectedEvent != "All") {
-      q = q.where('cateredEventTypes', arrayContains: _selectedEvent);
+      List<String> subEvents = _eventMap[_selectedEvent] ?? [_selectedEvent];
+      q = q.where('cateredEventTypes', arrayContainsAny: subEvents);
     }
+
+    // Optionally, you can filter by location if _selectedLocation is set
+    // This requires having latitude & longitude fields in your caterers collection
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: q.snapshots(),
@@ -218,147 +248,129 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
         return SizedBox(
           height: 230,
-          child: PageView.builder(
-            controller: _pageController,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(left: 16, right: 16),
             itemCount: docs.length,
-            physics: const BouncingScrollPhysics(),
-            onPageChanged: (index) => setState(() => _currentPage = index),
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               final doc = docs[index];
               final data = doc.data();
               final name = _readString(data, 'businessName', 'Caterer');
               final address = _readString(data, 'address', 'No address provided');
               final serviceArea = _readString(data, 'serviceArea', '');
-              final logoUrl = (() {
-                final a = data['logoUrl'];
-                final b = data['logo'];
-                if (a is String && a.trim().isNotEmpty) return a.trim();
-                if (b is String && b.trim().isNotEmpty) return b.trim();
-                return '';
-              })();
+              final logoUrl = (data['logoUrl'] ?? data['logo'] ?? '').toString();
               final rating = _readDouble(data, 'rating', 0);
 
-              double scale = _currentPage == index ? 1.0 : 0.9;
-              double translateY = _currentPage == index ? 0 : 12;
-
-              return Transform.translate(
-                offset: Offset(0, translateY),
-                child: Transform.scale(
-                  scale: scale,
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => CatererDetailsPage(catererId: doc.id)),
-                      );
-                    },
-                    child: Container(
-                      width: 140,
-                      // **first card starts fully at left edge**
-                      margin: EdgeInsets.only(
-                        left: index == 0 ? 0 : 12,
-                        right: index == docs.length - 1 ? 16 : 12,
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => CatererDetailsPage(catererId: doc.id, customerId: '', initialData: {},)),
+                  );
+                },
+                child: Container(
+                  width: 160,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
                       ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color: Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
-                            blurRadius: 12,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(20),
+                          topRight: Radius.circular(20),
+                        ),
+                        child: SizedBox(
+                          height: 120,
+                          width: 160,
+                          child: logoUrl.isNotEmpty
+                              ? Image.network(logoUrl, fit: BoxFit.cover)
+                              : Container(
+                                  color: kMaincolor.withOpacity(0.2),
+                                  child: const Icon(
+                                    Icons.restaurant,
+                                    color: Colors.white70,
+                                    size: 36,
+                                  ),
+                                ),
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ClipRRect(
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(20),
-                              topRight: Radius.circular(20),
-                            ),
-                            child: SizedBox(
-                              height: 120,
-                              width: 140,
-                              child: logoUrl.isNotEmpty
-                                  ? Image.network(logoUrl, fit: BoxFit.cover)
-                                  : Container(
-                                      color: kMaincolor.withOpacity(0.2),
-                                      child: const Icon(
-                                        Icons.restaurant,
-                                        color: Colors.white70,
-                                        size: 36,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.all(6),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    name,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold, fontSize: 13),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  Text(
-                                    address,
-                                    style: TextStyle(color: Colors.grey[600], fontSize: 11),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  if (serviceArea.isNotEmpty)
-                                    Text(
-                                      serviceArea,
-                                      style: TextStyle(
-                                          color: Colors.grey[500], fontSize: 10),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    children: List.generate(
-                                      5,
-                                      (i) => Icon(
-                                        i < rating.round()
-                                            ? Icons.star
-                                            : Icons.star_border,
-                                        size: 12,
-                                        color: Colors.amber,
-                                      ),
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  Container(
-                                    width: double.infinity,
-                                    alignment: Alignment.center,
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: kMaincolor,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Text(
-                                      "View Details",
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
+                              Text(
+                                address,
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 11),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (serviceArea.isNotEmpty)
+                                Text(
+                                  serviceArea,
+                                  style: TextStyle(
+                                      color: Colors.grey[500], fontSize: 10),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: List.generate(
+                                  5,
+                                  (i) => Icon(
+                                    i < rating.round()
+                                        ? Icons.star
+                                        : Icons.star_border,
+                                    size: 12,
+                                    color: Colors.amber,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Container(
+                                width: double.infinity,
+                                alignment: Alignment.center,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: kMaincolor,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Text(
+                                  "View Details",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               );

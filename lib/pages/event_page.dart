@@ -32,7 +32,7 @@ class _EventsPageState extends State<EventsPage> {
       case 2:
         break;
       case 3:
-        Navigator.pushReplacementNamed(context, '/edit-profile');
+        Navigator.pushReplacementNamed(context, '/caterer-profile');
         break;
     }
   }

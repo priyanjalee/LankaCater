@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import '../../constants/colors.dart';
-import 'choose_role_page.dart'; 
+import 'choose_role_page.dart';
+import 'caterer_profile_page.dart';
+import 'orders_page.dart';
+import 'event_page.dart';
+import 'manage_menu_page.dart';
+import 'manage_gallery_page.dart';
+import 'caterer_inbox_page.dart'; 
 
 class CatererHomePage extends StatefulWidget {
   const CatererHomePage({super.key});
@@ -39,7 +46,7 @@ class _CatererHomePageState extends State<CatererHomePage> {
         }
       }
     } catch (e) {
-      print("Error fetching caterer data: $e");
+      debugPrint("Error fetching caterer data: $e");
     }
   }
 
@@ -59,21 +66,35 @@ class _CatererHomePageState extends State<CatererHomePage> {
         }
       }
     } catch (e) {
-      print("Error checking ratings: $e");
+      debugPrint("Error checking ratings: $e");
     }
   }
 
   void _onItemTapped(int index) {
+    if (_selectedIndex == index) return;
+
     setState(() => _selectedIndex = index);
+
     switch (index) {
+      case 0:
+        break; // Already on Home
       case 1:
-        Navigator.pushNamed(context, '/orders');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+        );
         break;
       case 2:
-        Navigator.pushNamed(context, '/events');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const EventsPage()),
+        );
         break;
       case 3:
-        Navigator.pushNamed(context, '/edit-profile');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CatererProfilePage()),
+        );
         break;
     }
   }
@@ -88,7 +109,6 @@ class _CatererHomePageState extends State<CatererHomePage> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () {
-            // Navigate directly to ChooseRolePage
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
@@ -104,6 +124,20 @@ class _CatererHomePageState extends State<CatererHomePage> {
             color: Colors.white,
           ),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat, color: Colors.white),
+            onPressed: () {
+              final catererId = FirebaseAuth.instance.currentUser!.uid;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CatererInboxPage(catererId: catererId),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -136,7 +170,6 @@ class _CatererHomePageState extends State<CatererHomePage> {
     );
   }
 
-  // ---------------- Quick Actions Card ----------------
   Widget _quickActionsCard() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -161,25 +194,25 @@ class _CatererHomePageState extends State<CatererHomePage> {
             _quickActionButton(
               icon: Icons.shopping_bag,
               title: "Orders",
-              routeName: "/orders",
+              page: const OrdersPage(),
               description: "View and manage all customer orders efficiently.",
             ),
             _quickActionButton(
               icon: Icons.event,
               title: "Events",
-              routeName: "/events",
+              page: const EventsPage(),
               description: "Plan, track, and organize catering events.",
             ),
             _quickActionButton(
               icon: Icons.menu_book,
               title: "Manage Menus",
-              routeName: "/manage-menu",
+              page: const ManageMenuPage(),
               description: "Add or edit your menus for customers to explore.",
             ),
             _quickActionButton(
               icon: Icons.photo_library,
               title: "Manage Gallery",
-              routeName: "/manage-gallery",
+              page: const ManageGalleryPage(),
               description: "Upload and showcase photos of your dishes.",
             ),
           ],
@@ -191,11 +224,14 @@ class _CatererHomePageState extends State<CatererHomePage> {
   Widget _quickActionButton({
     required IconData icon,
     required String title,
-    required String routeName,
+    required Widget page,
     required String description,
   }) {
     return InkWell(
-      onTap: () => Navigator.pushNamed(context, routeName),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => page),
+      ),
       borderRadius: BorderRadius.circular(20),
       child: Ink(
         decoration: BoxDecoration(
@@ -248,52 +284,36 @@ class _CatererHomePageState extends State<CatererHomePage> {
   }
 
   Widget _ratingCard() {
-    return InkWell(
-      onTap: () async {
-        final roleDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(FirebaseAuth.instance.currentUser!.uid)
-            .get();
-
-        if (roleDoc.exists && roleDoc['role'] == 'customer') {
-          Navigator.pushNamed(context, '/reviews');
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Only customers can give reviews.")),
-          );
-        }
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.15),
-              spreadRadius: 2,
-              blurRadius: 6,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 25,
-              backgroundColor: kMaincolor.withOpacity(0.15),
-              child: const Icon(Icons.star, size: 30, color: Colors.orange),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text("4.8 / 5.0", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                Text("Based on 25 customer reviews", style: TextStyle(color: Colors.grey)),
-              ],
-            )
-          ],
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.15),
+            spreadRadius: 2,
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 25,
+            backgroundColor: kMaincolor.withOpacity(0.15),
+            child: const Icon(Icons.star, size: 30, color: Colors.orange),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text("4.8 / 5.0", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text("Based on 25 customer reviews", style: TextStyle(color: Colors.grey)),
+            ],
+          )
+        ],
       ),
     );
   }
