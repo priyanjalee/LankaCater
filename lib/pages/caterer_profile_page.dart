@@ -33,6 +33,7 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _aboutUsController = TextEditingController();
 
   @override
   void initState() {
@@ -52,6 +53,7 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
           _emailController.text = data['email'] ?? user.email ?? '';
           _phoneController.text = data['phone'] ?? '';
           _addressController.text = data['address'] ?? '';
+          _aboutUsController.text = data['description'] ?? '';
           profileImageUrl = data['profileImage'];
         } else {
           _emailController.text = user.email ?? '';
@@ -120,7 +122,12 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
       onTap: () async {
         Navigator.pop(context);
         final picker = ImagePicker();
-        final pickedFile = await picker.pickImage(source: source, imageQuality: 70);
+        final pickedFile = await picker.pickImage(
+          source: source, 
+          imageQuality: 50,
+          maxWidth: 800,
+          maxHeight: 800,
+        );
         if (pickedFile != null) {
           setState(() => _pickedImage = File(pickedFile.path));
         }
@@ -152,14 +159,62 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
   Future<String?> _uploadProfileImage(File image) async {
     try {
       final user = _auth.currentUser!;
+      
+      // Check if file exists and is readable
+      if (!await image.exists()) {
+        debugPrint('Image file does not exist: ${image.path}');
+        return null;
+      }
+
       final ref = FirebaseStorage.instance
           .ref()
           .child('caterer_profiles')
-          .child('${user.uid}.jpg');
-      await ref.putFile(image);
-      return await ref.getDownloadURL();
+          .child('${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      
+      debugPrint('Starting upload to: ${ref.fullPath}');
+      
+      // Upload with metadata
+      final metadata = SettableMetadata(
+        contentType: 'image/jpeg',
+        customMetadata: {
+          'uploadedBy': user.uid,
+          'uploadedAt': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      final uploadTask = ref.putFile(image, metadata);
+      
+      // Monitor upload progress
+      uploadTask.snapshotEvents.listen(
+        (TaskSnapshot snapshot) {
+          double progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          debugPrint('Upload progress: ${progress.toStringAsFixed(2)}%');
+        },
+        onError: (error) {
+          debugPrint('Upload stream error: $error');
+        },
+      );
+      
+      final snapshot = await uploadTask;
+      debugPrint('Upload completed. State: ${snapshot.state}');
+      
+      if (snapshot.state == TaskState.success) {
+        final downloadUrl = await ref.getDownloadURL();
+        debugPrint('Download URL obtained: $downloadUrl');
+        return downloadUrl;
+      } else {
+        debugPrint('Upload failed with state: ${snapshot.state}');
+        return null;
+      }
+      
     } catch (e) {
-      debugPrint('Image upload failed: $e');
+      debugPrint('Image upload failed with error: $e');
+      debugPrint('Error type: ${e.runtimeType}');
+      if (e.toString().contains('permission')) {
+        debugPrint('Permission error detected. Check Firebase Storage rules.');
+      } else if (e.toString().contains('network')) {
+        debugPrint('Network error detected. Check internet connection.');
+      }
       return null;
     }
   }
@@ -173,29 +228,58 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
     setState(() => _saving = true);
     try {
       String? uploadedUrl = profileImageUrl;
+      
+      // Upload new image if picked
       if (_pickedImage != null) {
+        debugPrint('Attempting to upload profile image...');
+        _showSnackBar("Uploading image...", isError: false);
+        
         final url = await _uploadProfileImage(_pickedImage!);
-        if (url != null) uploadedUrl = url;
+        if (url != null && url.isNotEmpty) {
+          uploadedUrl = url;
+          debugPrint('Image uploaded successfully: $url');
+        } else {
+          debugPrint('Image upload returned null or empty URL');
+          _showSnackBar("Failed to upload image. Please check your internet connection and try again.", isError: true);
+          if (mounted) setState(() => _saving = false);
+          return;
+        }
       }
 
       final user = _auth.currentUser!;
+      debugPrint('Saving profile data to Firestore...');
+      
       await _firestore.collection('caterers').doc(user.uid).set({
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'phone': _phoneController.text.trim(),
         'address': _addressController.text.trim(),
+        'description': _aboutUsController.text.trim(),
         'profileImage': uploadedUrl,
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      // Update the state properly - only clear picked image after successful upload
       setState(() {
         profileImageUrl = uploadedUrl;
-        _pickedImage = null;
+        _pickedImage = null; // Clear the picked image only after successful save
       });
 
       _showSnackBar("Profile updated successfully!", isError: false);
+      debugPrint('Profile saved successfully');
     } catch (e) {
       debugPrint('Error saving profile: $e');
-      _showSnackBar("Failed to update profile", isError: true);
+      String errorMessage = "Failed to update profile";
+      
+      if (e.toString().contains('permission-denied')) {
+        errorMessage = "Permission denied. Please check your account permissions.";
+      } else if (e.toString().contains('network')) {
+        errorMessage = "Network error. Please check your internet connection.";
+      } else if (e.toString().contains('storage')) {
+        errorMessage = "Storage error. Please try again.";
+      }
+      
+      _showSnackBar(errorMessage, isError: true);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -247,6 +331,7 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
     required IconData icon,
     TextInputType type = TextInputType.text,
     bool enabled = true,
+    int maxLines = 1,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -265,6 +350,7 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
         controller: controller,
         keyboardType: type,
         enabled: enabled,
+        maxLines: maxLines,
         style: TextStyle(
           color: enabled ? Colors.black87 : Colors.grey[600],
           fontSize: 16,
@@ -369,6 +455,16 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
     );
   }
 
+  // Helper method to get the current profile image
+  ImageProvider<Object>? _getCurrentProfileImage() {
+    if (_pickedImage != null) {
+      return FileImage(_pickedImage!);
+    } else if (profileImageUrl != null && profileImageUrl!.isNotEmpty) {
+      return NetworkImage(profileImageUrl!);
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -469,12 +565,8 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
                           child: CircleAvatar(
                             radius: 60,
                             backgroundColor: Colors.grey[300],
-                            backgroundImage: _pickedImage != null
-                                ? FileImage(_pickedImage!)
-                                : (profileImageUrl != null
-                                    ? NetworkImage(profileImageUrl!)
-                                    : null) as ImageProvider<Object>?,
-                            child: (_pickedImage == null && profileImageUrl == null)
+                            backgroundImage: _getCurrentProfileImage(),
+                            child: _getCurrentProfileImage() == null
                                 ? const Icon(
                                     Icons.person,
                                     size: 60,
@@ -576,6 +668,14 @@ class _CatererProfilePageState extends State<CatererProfilePage> {
                     label: "Business Address",
                     controller: _addressController,
                     icon: Icons.location_on_outlined,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTextField(
+                    label: "About Us",
+                    controller: _aboutUsController,
+                    icon: Icons.info_outline,
+                    type: TextInputType.multiline,
+                    maxLines: 4,
                   ),
                   const SizedBox(height: 30),
 

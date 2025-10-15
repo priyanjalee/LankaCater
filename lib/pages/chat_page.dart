@@ -36,6 +36,7 @@ class _ChatPageState extends State<ChatPage> {
 
   bool _isUploading = false;
   String? _cachedBusinessName; // Cache business name to avoid repeated fetches
+  bool _hasUnreadMessages = false; // Track unread messages
 
   @override
   void initState() {
@@ -44,6 +45,23 @@ class _ChatPageState extends State<ChatPage> {
     _markMessagesAsRead();
     _handleNotificationClick();
     _fetchBusinessName(); // Fetch business name once when page loads
+    _listenToUnreadMessages(); // Listen for unread message status
+  }
+
+  /// Listen to unread messages to show notification dot
+  void _listenToUnreadMessages() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    _firestore.collection('chats').doc(widget.chatId).snapshots().listen((doc) {
+      if (doc.exists && mounted) {
+        final data = doc.data()!;
+        final unreadCount = data['unreadCount_${user.uid}'] ?? 0;
+        setState(() {
+          _hasUnreadMessages = unreadCount > 0;
+        });
+      }
+    });
   }
 
   /// Fetch and cache business name
@@ -52,14 +70,19 @@ class _ChatPageState extends State<ChatPage> {
     if (user == null) return;
 
     try {
-      final catererDoc = await _firestore.collection('caterers').doc(user.uid).get();
+      final catererDoc =
+          await _firestore.collection('caterers').doc(user.uid).get();
       if (catererDoc.exists && mounted) {
         final data = catererDoc.data()!;
-        _cachedBusinessName = data['businessName'] ?? data['name'] ?? user.displayName ?? 'Caterer';
+        _cachedBusinessName = data['businessName'] ??
+            data['name'] ??
+            user.displayName ??
+            'Caterer';
       }
     } catch (e) {
       debugPrint('Error fetching business name: $e');
-      _cachedBusinessName = _auth.currentUser?.displayName ?? 'Caterer';
+      _cachedBusinessName =
+          _auth.currentUser?.displayName ?? 'Caterer';
     }
   }
 
@@ -68,34 +91,40 @@ class _ChatPageState extends State<ChatPage> {
     if (_cachedBusinessName != null) {
       return _cachedBusinessName!;
     }
-    
+
     final user = _auth.currentUser;
     if (user == null) return 'Caterer';
 
     try {
-      final catererDoc = await _firestore.collection('caterers').doc(user.uid).get();
+      final catererDoc =
+          await _firestore.collection('caterers').doc(user.uid).get();
       if (catererDoc.exists) {
         final data = catererDoc.data()!;
-        final businessName = data['businessName'] ?? data['name'] ?? user.displayName ?? 'Caterer';
+        final businessName = data['businessName'] ??
+            data['name'] ??
+            user.displayName ??
+            'Caterer';
         _cachedBusinessName = businessName; // Cache for future use
         return businessName;
       }
     } catch (e) {
       debugPrint('Error fetching business name: $e');
     }
-    
+
     return user.displayName ?? 'Caterer';
   }
 
   /// Setup foreground FCM notifications
   void _setupFCM() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (!mounted) return;
       if (message.notification != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message.notification!.body ?? 'New message'),
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             margin: const EdgeInsets.all(16),
           ),
         );
@@ -106,6 +135,7 @@ class _ChatPageState extends State<ChatPage> {
   /// Handle tap on notification to open the correct chat
   void _handleNotificationClick() {
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      if (!mounted) return;
       final data = message.data;
       if (data.isNotEmpty && data['chatId'] != null) {
         Navigator.pushReplacement(
@@ -128,10 +158,134 @@ class _ChatPageState extends State<ChatPage> {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    await _firestore.collection('chats').doc(widget.chatId).set({
-      'lastRead_${user.uid}': FieldValue.serverTimestamp(),
-      'unreadCount_${user.uid}': 0,
-    }, SetOptions(merge: true));
+    try {
+      await _firestore.collection('chats').doc(widget.chatId).set({
+        'lastRead_${user.uid}': FieldValue.serverTimestamp(),
+        'unreadCount_${user.uid}': 0,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Error marking messages as read: $e');
+    }
+  }
+
+  /// Delete a message with proper permissions
+  Future<void> _deleteMessage(
+      String messageId, String messageType, String? imageUrl) async {
+    try {
+      // Show confirmation dialog
+      final shouldDelete = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Delete Message'),
+          content: const Text(
+              'Are you sure you want to delete this message? This action cannot be undone.'),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child:
+                  Text('Cancel', style: TextStyle(color: Colors.grey[600])),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              // If your Flutter is older, you can change foregroundColor -> primary
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldDelete != true) return;
+
+      final msgRef = _firestore
+          .collection('chats')
+          .doc(widget.chatId)
+          .collection('messages')
+          .doc(messageId);
+
+      // Delete the Firestore message first
+      await msgRef.delete();
+
+      // If it's an image message, attempt to delete the image from Storage
+      if (messageType == 'image' && imageUrl != null && imageUrl.isNotEmpty) {
+        try {
+          await FirebaseStorage.instance.refFromURL(imageUrl).delete();
+        } catch (e) {
+          // Storage delete can fail due to rules or if already deleted; not fatal for UX
+          debugPrint('Error deleting image from storage: $e');
+        }
+      }
+
+      // Update last message in chat
+      await _updateLastMessageAfterDeletion();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Message deleted successfully'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.green,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error deleting message: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Failed to delete message'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () =>
+                _deleteMessage(messageId, messageType, imageUrl),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Update the last message in chat after deletion
+  Future<void> _updateLastMessageAfterDeletion() async {
+    try {
+      final chatRef = _firestore.collection('chats').doc(widget.chatId);
+      final messagesSnapshot = await chatRef
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .limit(1)
+          .get();
+
+      if (messagesSnapshot.docs.isNotEmpty) {
+        final lastDoc = messagesSnapshot.docs.first;
+        final lastMessage = lastDoc.data();
+        final messageText = (lastMessage['type'] == 'image')
+            ? 'Photo'
+            : (lastMessage['text'] ?? '');
+
+        await chatRef.update({
+          'lastMessage': messageText,
+          'lastTimestamp': lastMessage['timestamp'] ?? FieldValue.serverTimestamp(),
+        });
+      } else {
+        // No messages left in this chat
+        await chatRef.update({
+          'lastMessage': '',
+          'lastTimestamp': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      debugPrint('Error updating last message: $e');
+    }
   }
 
   @override
@@ -153,7 +307,7 @@ class _ChatPageState extends State<ChatPage> {
     try {
       // Get business name
       final businessName = await _getBusinessName();
-      
+
       String notificationMessage = messageText;
 
       // If it's an image message, show appropriate text
@@ -234,12 +388,14 @@ class _ChatPageState extends State<ChatPage> {
       _scrollToBottom();
     } catch (e) {
       debugPrint("Error sending message: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text("Failed to send message."),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           margin: const EdgeInsets.all(16),
         ),
       );
@@ -322,17 +478,21 @@ class _ChatPageState extends State<ChatPage> {
       _scrollToBottom();
     } catch (e) {
       debugPrint("Error sending image: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text("Failed to send image."),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.red,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          margin: const EdgeInsets.all(16),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text("Failed to send image."),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
     } finally {
-      setState(() => _isUploading = false);
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
     }
   }
 
@@ -429,25 +589,26 @@ class _ChatPageState extends State<ChatPage> {
   /// Send FCM push notification to target user
   Future<void> _sendNotificationToUser(
       String toUserId, String title, String body, String chatId) async {
-    final tokenSnapshot =
-        await _firestore.collection('users').doc(toUserId).get();
-    final token = tokenSnapshot.data()?['fcmToken'];
-    if (token == null) return;
-
-    final data = {
-      "to": token,
-      "notification": {"title": title, "body": body},
-      "data": {
-        "chatId": chatId,
-        "otherUserId": _auth.currentUser!.uid,
-        "otherUserName": _cachedBusinessName ?? _auth.currentUser!.displayName ?? '',
-        "otherUserImage": _auth.currentUser!.photoURL ?? ''
-      }
-    };
-
-    const serverKey = 'YOUR_FCM_SERVER_KEY_HERE'; // replace with your key
-
     try {
+      final tokenSnapshot =
+          await _firestore.collection('users').doc(toUserId).get();
+      final token = tokenSnapshot.data()?['fcmToken'];
+      if (token == null) return;
+
+      final data = {
+        "to": token,
+        "notification": {"title": title, "body": body},
+        "data": {
+          "chatId": chatId,
+          "otherUserId": _auth.currentUser!.uid,
+          "otherUserName":
+              _cachedBusinessName ?? _auth.currentUser!.displayName ?? '',
+          "otherUserImage": _auth.currentUser!.photoURL ?? ''
+        }
+      };
+
+      const serverKey = 'YOUR_FCM_SERVER_KEY_HERE';
+
       await http.post(
         Uri.parse('https://fcm.googleapis.com/fcm/send'),
         headers: {
@@ -492,113 +653,166 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildMessageBubble({
+    required String messageId,
     required String text,
     required bool isMe,
     required Timestamp? timestamp,
     String? imageUrl,
     required String type,
   }) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: type == 'image' 
-            ? const EdgeInsets.all(4) 
-            : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-          minWidth: type == 'image' ? 200 : 0,
-        ),
-        decoration: BoxDecoration(
-          color: isMe ? kMaincolor : Colors.grey.shade200,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isMe
-                ? const Radius.circular(16)
-                : const Radius.circular(4),
-            bottomRight: isMe
-                ? const Radius.circular(4)
-                : const Radius.circular(16),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              spreadRadius: 1,
-              blurRadius: 3,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (type == 'image' && imageUrl != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      height: 200,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(
-                        child: CircularProgressIndicator(),
-                      ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      height: 200,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.error, color: Colors.red),
-                      ),
-                    );
-                  },
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ensure long-press always registers
+      onLongPress: isMe
+          ? () {
+              // Show delete option only for messages sent by the current user
+              showModalBottomSheet(
+                context: context,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(20)),
                 ),
+                builder: (context) => Container(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Message Options',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 20),
+                      ListTile(
+                        leading:
+                            const Icon(Icons.delete, color: Colors.red),
+                        title: const Text('Delete Message',
+                            style: TextStyle(color: Colors.red)),
+                        onTap: () async {
+                          Navigator.pop(context);
+                          // Wait a microtask so the sheet fully closes before showing dialog/snackbar
+                          await Future<void>.delayed(
+                              const Duration(milliseconds: 10));
+                          await _deleteMessage(messageId, type, imageUrl);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                  ),
+                ),
+              );
+            }
+          : null,
+      child: Align(
+        alignment:
+            isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: type == 'image'
+              ? const EdgeInsets.all(4)
+              : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
+            minWidth: type == 'image' ? 200 : 0,
+          ),
+          decoration: BoxDecoration(
+            color: isMe ? kMaincolor : Colors.grey.shade200,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft:
+                  isMe ? const Radius.circular(16) : const Radius.circular(4),
+              bottomRight:
+                  isMe ? const Radius.circular(4) : const Radius.circular(16),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                spreadRadius: 1,
+                blurRadius: 3,
+                offset: const Offset(0, 1),
               ),
-              if (timestamp != null) ...[
-                const SizedBox(height: 4),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  child: Text(
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (type == 'image' && imageUrl != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(
+                          child: Icon(Icons.error, color: Colors.red),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                if (timestamp != null) ...[
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    child: Text(
+                      _formatTimestamp(timestamp),
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : Colors.black45,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+              ] else ...[
+                Text(
+                  text,
+                  style: TextStyle(
+                    color: isMe ? Colors.white : Colors.black87,
+                    fontSize: 15,
+                  ),
+                ),
+                if (timestamp != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
                     _formatTimestamp(timestamp),
                     style: TextStyle(
                       color: isMe ? Colors.white70 : Colors.black45,
                       fontSize: 11,
                     ),
                   ),
-                ),
-              ],
-            ] else ...[
-              Text(
-                text,
-                style: TextStyle(
-                  color: isMe ? Colors.white : Colors.black87,
-                  fontSize: 15,
-                ),
-              ),
-              if (timestamp != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  _formatTimestamp(timestamp),
-                  style: TextStyle(
-                    color: isMe ? Colors.white70 : Colors.black45,
-                    fontSize: 11,
-                  ),
-                ),
+                ],
               ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -616,21 +830,40 @@ class _ChatPageState extends State<ChatPage> {
         iconTheme: const IconThemeData(color: Colors.white),
         title: Row(
           children: [
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: CircleAvatar(
-                radius: 18,
-                backgroundColor: Colors.white,
-                backgroundImage: widget.otherUserImage.isNotEmpty
-                    ? NetworkImage(widget.otherUserImage)
-                    : null,
-                child: widget.otherUserImage.isEmpty
-                    ? Icon(Icons.person, color: kMaincolor, size: 20)
-                    : null,
-              ),
+            Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.white,
+                    backgroundImage: widget.otherUserImage.isNotEmpty
+                        ? NetworkImage(widget.otherUserImage)
+                        : null,
+                    child: widget.otherUserImage.isEmpty
+                        ? Icon(Icons.person, color: kMaincolor, size: 20)
+                        : null,
+                  ),
+                ),
+                // Notification dot for unread messages
+                if (_hasUnreadMessages)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -727,129 +960,143 @@ class _ChatPageState extends State<ChatPage> {
 
                 return ListView.builder(
                   controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
                   itemCount: docs.length,
                   itemBuilder: (context, i) {
-                    final d = docs[i].data();
-                    final text = (d['text'] ?? '').toString();
-                    final imageUrl = d['imageUrl']?.toString();
-                    final senderId = (d['senderId'] ?? '').toString();
-                    final ts = d['timestamp'] as Timestamp?;
-                    final type = (d['type'] ?? 'text').toString();
-                    final isMe = currentUser != null && senderId == currentUser.uid;
+                    final doc = docs[i];
+                    final data = doc.data();
+                    final messageId = doc.id;
+                    final text = (data['text'] ?? '').toString();
+                    final imageUrl = data['imageUrl']?.toString();
+                    final senderId = (data['senderId'] ?? '').toString();
+                    final timestamp = data['timestamp'] as Timestamp?;
+                    final type = (data['type'] ?? 'text').toString();
+                    final isMe =
+                        senderId == (currentUser?.uid ?? '');
 
-                    return _buildMessageBubble(
-                      text: text,
-                      isMe: isMe,
-                      timestamp: ts,
-                      imageUrl: imageUrl,
-                      type: type,
+                    return Padding(
+                      key: ValueKey(messageId),
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: _buildMessageBubble(
+                        messageId: messageId,
+                        text: text,
+                        isMe: isMe,
+                        timestamp: timestamp,
+                        imageUrl: imageUrl,
+                        type: type,
+                      ),
                     );
                   },
                 );
               },
             ),
           ),
+          // Upload progress indicator
           if (_isUploading)
             Container(
               padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: const Offset(0, -1),
+                  ),
+                ],
+              ),
               child: Row(
                 children: [
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 12),
+                  const CircularProgressIndicator(strokeWidth: 2),
+                  const SizedBox(width: 16),
                   Text(
-                    'Sending image...',
-                    style: TextStyle(color: Colors.grey[600]),
+                    'Uploading image...',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 14,
+                    ),
                   ),
                 ],
               ),
             ),
-          SafeArea(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 4,
-                    offset: Offset(0, -2),
-                  )
-                ],
-              ),
+          // Message input area
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  spreadRadius: 1,
+                  blurRadius: 3,
+                  offset: const Offset(0, -1),
+                ),
+              ],
+            ),
+            child: SafeArea(
               child: Row(
                 children: [
+                  // Image picker button
                   GestureDetector(
-                    onTap: _isUploading ? null : _showImagePicker,
+                    onTap: _showImagePicker,
                     child: Container(
-                      height: 46,
-                      width: 46,
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: _isUploading 
-                            ? Colors.grey[400] 
-                            : kMaincolor.withOpacity(0.1),
+                        color: kMaincolor.withOpacity(0.1),
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _isUploading ? Colors.grey : kMaincolor,
-                          width: 1,
-                        ),
                       ),
                       child: Icon(
                         Icons.image,
-                        color: _isUploading ? Colors.grey : kMaincolor,
-                        size: 22,
+                        color: kMaincolor,
+                        size: 20,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
+                  // Text input field
                   Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      textCapitalization: TextCapitalization.sentences,
-                      maxLines: null,
-                      enabled: !_isUploading,
-                      decoration: InputDecoration(
-                        hintText: 'Type your message...',
-                        filled: true,
-                        fillColor: Colors.grey.shade100,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(25),
+                        border: Border.all(color: Colors.grey[300]!),
                       ),
-                      onSubmitted: (_) => _sendMessage(),
+                      child: TextField(
+                        controller: _messageController,
+                        decoration: const InputDecoration(
+                          hintText: 'Type a message...',
+                          hintStyle: TextStyle(color: Colors.grey),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                        ),
+                        maxLines: null,
+                        textCapitalization: TextCapitalization.sentences,
+                        onSubmitted: (_) => _sendMessage(),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
+                  // Send button
                   GestureDetector(
-                    onTap: _isUploading ? null : _sendMessage,
+                    onTap: _sendMessage,
                     child: Container(
-                      height: 46,
-                      width: 46,
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        gradient: _isUploading 
-                            ? null 
-                            : LinearGradient(
-                                colors: [kMaincolor, kMaincolor.withOpacity(0.8)],
-                              ),
-                        color: _isUploading ? Colors.grey[400] : null,
+                        color: kMaincolor,
                         shape: BoxShape.circle,
-                        boxShadow: !_isUploading ? [
+                        boxShadow: [
                           BoxShadow(
                             color: kMaincolor.withOpacity(0.3),
                             spreadRadius: 1,
-                            blurRadius: 5,
+                            blurRadius: 3,
                             offset: const Offset(0, 2),
                           ),
-                        ] : null,
+                        ],
                       ),
                       child: const Icon(
                         Icons.send,
@@ -861,7 +1108,7 @@ class _ChatPageState extends State<ChatPage> {
                 ],
               ),
             ),
-          )
+          ),
         ],
       ),
     );

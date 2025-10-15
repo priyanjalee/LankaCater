@@ -221,7 +221,28 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     return double.tryParse(s) ?? fallback;
   }
 
-  Widget _buildCatererCarousel() {
+  String _getCatererImageUrl(Map<String, dynamic> data) {
+    // First check for logoUrl or logo
+    String logoUrl = (data['logoUrl'] ?? data['logo'] ?? '').toString().trim();
+    if (logoUrl.isNotEmpty) {
+      return logoUrl;
+    }
+    
+    // If no logo, check for profile picture with various possible field names
+    String profilePicture = (data['profilePicture'] ?? 
+                           data['profilePictureUrl'] ?? 
+                           data['profileImage'] ??
+                           data['profileImageUrl'] ??
+                           data['imageUrl'] ??
+                           data['image'] ?? '').toString().trim();
+    if (profilePicture.isNotEmpty) {
+      return profilePicture;
+    }
+    
+    return '';
+  }
+
+  Widget _buildCatererGrid() {
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance.collection('caterers');
 
     if (_selectedEvent != "All") {
@@ -229,155 +250,315 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
       q = q.where('cateredEventTypes', arrayContainsAny: subEvents);
     }
 
-    // Optionally, you can filter by location if _selectedLocation is set
-    // This requires having latitude & longitude fields in your caterers collection
-
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: q.snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
-            child: Text(
-              "No caterers available for ${_selectedEvent == "All" ? "now" : _selectedEvent}",
-              style: const TextStyle(color: Colors.grey, fontSize: 16),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                "No caterers available for ${_selectedEvent == "All" ? "now" : _selectedEvent}",
+                style: const TextStyle(color: Colors.grey, fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
             ),
           );
         }
 
         final docs = snapshot.data!.docs;
 
-        return SizedBox(
-          height: 230,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.only(left: 16, right: 16),
-            itemCount: docs.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final doc = docs[index];
-              final data = doc.data();
-              final name = _readString(data, 'businessName', 'Caterer');
-              final address = _readString(data, 'address', 'No address provided');
-              final serviceArea = _readString(data, 'serviceArea', '');
-              final logoUrl = (data['logoUrl'] ?? data['logo'] ?? '').toString();
-              final rating = _readDouble(data, 'rating', 0);
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: (docs.length / 2).ceil(), // Create rows of 2 items
+            itemBuilder: (context, rowIndex) {
+              final startIndex = rowIndex * 2;
+              final endIndex = (startIndex + 2 > docs.length) ? docs.length : startIndex + 2;
+              final rowDocs = docs.sublist(startIndex, endIndex);
 
-              return GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => CatererDetailsPage(catererId: doc.id, customerId: '', initialData: {},)),
-                  );
-                },
-                child: Container(
-                  width: 160,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(20),
-                          topRight: Radius.circular(20),
-                        ),
-                        child: SizedBox(
-                          height: 120,
-                          width: 160,
-                          child: logoUrl.isNotEmpty
-                              ? Image.network(logoUrl, fit: BoxFit.cover)
-                              : Container(
-                                  color: kMaincolor.withOpacity(0.2),
-                                  child: const Icon(
-                                    Icons.restaurant,
-                                    color: Colors.white70,
-                                    size: 36,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      Expanded(
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    ...rowDocs.asMap().entries.map((entry) {
+                      final doc = entry.value;
+                      return Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                address,
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 11),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (serviceArea.isNotEmpty)
-                                Text(
-                                  serviceArea,
-                                  style: TextStyle(
-                                      color: Colors.grey[500], fontSize: 10),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: List.generate(
-                                  5,
-                                  (i) => Icon(
-                                    i < rating.round()
-                                        ? Icons.star
-                                        : Icons.star_border,
-                                    size: 12,
-                                    color: Colors.amber,
-                                  ),
-                                ),
-                              ),
-                              const Spacer(),
-                              Container(
-                                width: double.infinity,
-                                alignment: Alignment.center,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: kMaincolor,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Text(
-                                  "View Details",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          padding: EdgeInsets.only(
+                            right: entry.key == 0 && rowDocs.length > 1 ? 8 : 0,
+                            left: entry.key == 1 ? 8 : 0,
                           ),
+                          child: _buildCatererCard(doc),
                         ),
-                      ),
-                    ],
-                  ),
+                      );
+                    }),
+                    // Add empty space if odd number of items
+                    if (rowDocs.length == 1) const Expanded(child: SizedBox()),
+                  ],
                 ),
               );
             },
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCatererCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
+    final name = _readString(data, 'businessName', 'Caterer');
+    final address = _readString(data, 'address', 'No address provided');
+    final serviceArea = _readString(data, 'serviceArea', '');
+    final imageUrl = _getCatererImageUrl(data);
+    final rating = _readDouble(data, 'rating', 0);
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => CatererDetailsPage(catererId: doc.id, customerId: '', initialData: {})),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Image section
+            Container(
+              height: 120,
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+                gradient: LinearGradient(
+                  colors: [
+                    kMaincolor.withOpacity(0.1),
+                    kMaincolor.withOpacity(0.05),
+                  ],
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+                child: Stack(
+                  children: [
+                    imageUrl.isNotEmpty
+                        ? Image.network(
+                            imageUrl,
+                            width: double.infinity,
+                            height: 120,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return _buildPlaceholderImage();
+                            },
+                          )
+                        : _buildPlaceholderImage(),
+                    // Rating overlay
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.star,
+                              size: 12,
+                              color: Colors.amber,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              rating > 0 ? rating.toStringAsFixed(1) : 'New',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Content section
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Business name
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  
+                  // Address
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 14,
+                        color: Colors.grey[500],
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          address,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // Service area (if available)
+                  if (serviceArea.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.public_outlined,
+                          size: 12,
+                          color: Colors.grey[400],
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            serviceArea,
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  
+                  const SizedBox(height: 12),
+                  
+                  // View Details button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => CatererDetailsPage(
+                                  catererId: doc.id, 
+                                  customerId: '', 
+                                  initialData: {})),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kMaincolor,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text(
+                        "View Details",
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholderImage() {
+    return Container(
+      width: double.infinity,
+      height: 120,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            kMaincolor.withOpacity(0.15),
+            kMaincolor.withOpacity(0.08),
+          ],
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.restaurant_menu,
+            size: 32,
+            color: kMaincolor.withOpacity(0.6),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Catering",
+            style: TextStyle(
+              fontSize: 12,
+              color: kMaincolor.withOpacity(0.7),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -433,7 +614,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   ),
                 ),
               ),
-              _buildCatererCarousel(),
+              _buildCatererGrid(),
+              const SizedBox(height: 30),
             ],
           ),
         ),
